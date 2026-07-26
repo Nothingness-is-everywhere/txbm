@@ -21,6 +21,9 @@ config = {
         "min_width": 600,
         "min_height": 450,
     },
+    "adb": {
+        "packages": ["com.pinkcore.tkfm"],
+    },
     "onetime_tasks": [],
     "trigger_tasks": [],
 }

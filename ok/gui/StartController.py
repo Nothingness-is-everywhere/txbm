@@ -257,11 +257,11 @@ class StartController(QObject):
     def check_device_error(self):
         try:
             device = og.device_manager.get_preferred_device()
-            error_msg = self.tr("{} is not connected, please select the game window.").format(
-                device['nick'])
-            logger.info(f'test check_device_error msg: {error_msg}')
             if not device:
                 return self.tr('No game selected!')
+            error_msg = self.tr("{} is not connected, please select the game window.").format(
+                device['nick'] if device else '')
+            logger.info(f'test check_device_error msg: {error_msg}')
             if og.device_manager.capture_method is None:
                 return self.tr("Selected capture method is not supported by the game or your system!")
             if not og.device_manager.device_connected():
