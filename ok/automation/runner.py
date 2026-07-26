@@ -280,6 +280,7 @@ def launch_and_setup_game() -> bool:
       1. Launch game
       2. Close notice popup
       3. Navigate to main screen
+      4. Read stamina values (public variables)
     """
     runner = AutomationRunner()
 
@@ -303,12 +304,33 @@ def launch_and_setup_game() -> bool:
             "func": navigate_back_task,
             "required": False
         },
+        {
+            "name": "read_stamina",
+            "func": read_stamina_task,
+            "required": False
+        },
     ]
 
     results = runner.run_pipeline(tasks)
     runner.print_summary()
 
     return all(r.success for r in results if r)
+
+
+def read_stamina_task() -> bool:
+    """Task: Read and store stamina values as public variables."""
+    try:
+        from ok.automation.stamina_reader import get_stamina
+        state = get_stamina(force_refresh=True)
+        logger.info("=" * 40)
+        logger.info("STAMINA VALUES (public variables):")
+        logger.info(f"  stamina1: {state.stamina1} (ratio: {state.stamina1.ratio:.1%})")
+        logger.info(f"  stamina2: {state.stamina2} (ratio: {state.stamina2.ratio:.1%})")
+        logger.info("=" * 40)
+        return True
+    except Exception as e:
+        logger.error(f"read_stamina_task error: {e}")
+        return False
 
 
 def run_existing_tasks() -> bool:

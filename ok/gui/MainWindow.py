@@ -163,6 +163,15 @@ class MainWindow(FluentWindow):
                                      position=NavigationItemPosition.SCROLL)
                 self.grouped_task_tabs.append(group_tab)
 
+        # Add Task Execution Status tabs
+        from ok.gui.tasks.TaskExecutionTab import TaskExecutionTab
+        self.trigger_execution_tab = TaskExecutionTab(task_category="trigger")
+        self.addSubInterface(self.trigger_execution_tab, FluentIcon.SYNC, self.tr('实时触发'),
+                             position=NavigationItemPosition.SCROLL)
+        self.onetime_execution_tab = TaskExecutionTab(task_category="onetime")
+        self.addSubInterface(self.onetime_execution_tab, FluentIcon.UPDATE, self.tr('周常日常'),
+                             position=NavigationItemPosition.SCROLL)
+
         # Add custom tabs that should appear after built-in task tabs
         for tab_obj in after_custom_tabs:
             self.addSubInterface(tab_obj, tab_obj.icon, self.app.tr(tab_obj.name), position=tab_obj.position)

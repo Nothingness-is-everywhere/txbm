@@ -18,6 +18,12 @@ from ok.automation.config_loader import (
 )
 from ok.automation.game_task import GameTask
 from ok.automation.reporter import TaskReporter
+from ok.automation.stamina_reader import (
+    StaminaReader,
+    StaminaState,
+    StaminaValue,
+    get_stamina,
+)
 
 __all__ = [
     "TaskState",
@@ -29,4 +35,8 @@ __all__ = [
     "ConfigLoader",
     "GameTask",
     "TaskReporter",
+    "StaminaReader",
+    "StaminaState",
+    "StaminaValue",
+    "get_stamina",
 ]
