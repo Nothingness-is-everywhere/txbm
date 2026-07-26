@@ -522,6 +522,8 @@ class MainWindow(FluentWindow):
         width = min(max(item_widths), NAVIGATION_EXPAND_MAX_WIDTH)
         self.navigationInterface.setExpandWidth(width)
 
+        self.navigationInterface.setMinimumExpandWidth(48)
+
         if panel.displayMode in (NavigationDisplayMode.EXPAND, NavigationDisplayMode.MENU):
             self._expand_navigation_without_animation()
 

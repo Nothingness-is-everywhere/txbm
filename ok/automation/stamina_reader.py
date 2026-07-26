@@ -2,16 +2,18 @@
 Stamina reader module for 天下布魔 (Tianxia Bumo).
 
 Reads stamina/energy values from the main interface using:
-  1. Template matching to locate stamina bar regions
-  2. Digit extraction via contour analysis + template matching
-  3. EasyOCR as enhanced option (when available)
+  1. Bar template matching (with limited ROI) for robust localization
+  2. HSV color-space white text segmentation
+  3. Connected-component analysis for digit extraction
+  4. Template-based digit recognition via XOR comparison
+
+This implementation is optimized for speed and accuracy without OCR.
 
 Usage:
   from ok.automation.stamina_reader import StaminaReader, get_stamina
   reader = StaminaReader()
   values = reader.read_all()
   stamina1_current = values.stamina1.current
-  stamina1_max = values.stamina1.max
 """
 
 import time
@@ -32,22 +34,64 @@ logging.basicConfig(
 )
 logger = logging.getLogger("stamina_reader")
 
+def _imread(filepath: str, flags: int = cv2.IMREAD_COLOR) -> Optional[np.ndarray]:
+    """Read image file, supporting Unicode paths (e.g., Chinese characters)."""
+    try:
+        with open(filepath, 'rb') as f:
+            data = np.frombuffer(f.read(), dtype=np.uint8)
+        return cv2.imdecode(data, flags)
+    except Exception:
+        return None
+
+
 ADB_SERIAL = "127.0.0.1:16384"
 
-STAMINA1_TPL = "templates/stamina1_bar.png"
-STAMINA2_TPL = "templates/stamina2_bar.png"
+STAMINA_CONFIG = {
+    "stamina1": {
+        "name": "stamina1",
+        "label": "出征",
+        "bar_template": "templates/stamina1_bar.png",
+        "bar_search_roi": (0.55, 0.60, 0.95, 0.78),
+        "number_relative_offset": (0.05, 0.30, 0.80, 0.55),
+        "fallback_number_roi": (800, 1275, 130, 40),
+    },
+    "stamina2": {
+        "name": "stamina2",
+        "label": "调教",
+        "bar_template": "templates/stamina2_bar.png",
+        "bar_search_roi": (0.60, 0.72, 0.95, 0.88),
+        "number_relative_offset": (0.05, 0.30, 0.80, 0.55),
+        "fallback_number_roi": (840, 1510, 120, 50),
+    },
+}
 
-STAMINA_THRESHOLD = 0.65
+STAMINA_THRESHOLD = 0.60
 
-STAMINA1_ROI = (0.65, 0.62, 0.95, 0.72)
-STAMINA2_ROI = (0.70, 0.74, 0.95, 0.83)
+DIGIT_TEMPLATE_SIZE = (28, 40)
 
-STAMINA1_NUMBERS_OFFSET = (0.02, 0.10, 0.85, 0.45)
-STAMINA2_NUMBERS_OFFSET = (0.05, 0.15, 0.80, 0.45)
+WHITE_HSV_LOWER = np.array([0, 0, 150])
+WHITE_HSV_UPPER = np.array([180, 100, 255])
 
-DIGIT_TEMPLATES_DIR = "templates/digit_templates"
+CONNECTIVITY = 8
+MIN_DIGIT_AREA = 5
+MAX_DIGIT_AREA = 1200
+MIN_DIGIT_HEIGHT = 5
+MAX_DIGIT_HEIGHT = 80
+MIN_DIGIT_WIDTH = 2
+MAX_DIGIT_WIDTH = 70
+NARROW_ASPECT_RATIO = 0.25
 
-DIGIT_SIZE = (25, 40)
+TEMPLATE_SIMILARITY_THRESHOLD = 0.50
+
+DIGIT_TEMPLATES_DIRS = [
+    "templates/digits",
+    "templates/digit_templates",
+    "templates",
+]
+
+CACHE_DURATION = 5.0
+
+SCALE_FACTOR = 1.0
 
 
 @dataclass
@@ -81,8 +125,12 @@ class StaminaValue:
 @dataclass
 class StaminaState:
     """Container for all stamina values."""
-    stamina1: StaminaValue = field(default_factory=lambda: StaminaValue(name="stamina1"))
-    stamina2: StaminaValue = field(default_factory=lambda: StaminaValue(name="stamina2"))
+    stamina1: StaminaValue = field(
+        default_factory=lambda: StaminaValue(name="stamina1")
+    )
+    stamina2: StaminaValue = field(
+        default_factory=lambda: StaminaValue(name="stamina2")
+    )
     last_update: float = 0.0
 
     def to_dict(self) -> Dict[str, StaminaValue]:
@@ -93,9 +141,261 @@ class StaminaState:
 
     def summary(self) -> str:
         lines = []
-        lines.append(f"Stamina 1: {self.stamina1} ({self.stamina1.name})")
-        lines.append(f"Stamina 2: {self.stamina2} ({self.stamina2.name})")
+        lines.append(f"Stamina 1 (出征): {self.stamina1}")
+        lines.append(f"Stamina 2 (调教): {self.stamina2}")
         return "\n".join(lines)
+
+
+class DigitTemplateLibrary:
+    """Manages digit templates for fast template matching."""
+
+    def __init__(self):
+        self._templates: Dict[str, List[np.ndarray]] = {}
+        self._load_all_templates()
+
+    def _load_all_templates(self) -> None:
+        """Load digit templates from all template directories."""
+        loaded = 0
+        for dir_path in DIGIT_TEMPLATES_DIRS:
+            templates_path = Path(dir_path)
+            if not templates_path.exists():
+                continue
+
+            for img_file in templates_path.rglob("*.png"):
+                digit_char = None
+                parent_dir = img_file.parent.name
+
+                if parent_dir in '0123456789':
+                    digit_char = parent_dir
+                else:
+                    digit_char = self._extract_digit(img_file.stem)
+
+                if digit_char is None:
+                    continue
+
+                img = _imread(str(img_file), cv2.IMREAD_COLOR)
+                if img is None:
+                    continue
+
+                processed = self._preprocess_template(img)
+                if processed is not None and processed.size > 0:
+                    if digit_char not in self._templates:
+                        self._templates[digit_char] = []
+                    self._templates[digit_char].append(processed)
+                    loaded += 1
+
+        if loaded > 0:
+            logger.info(f"Loaded {loaded} digit templates "
+                        f"({len(self._templates)} digits: "
+                        f"{''.join(sorted(self._templates.keys()))})")
+        else:
+            logger.warning("No digit templates found")
+
+    def _extract_digit(self, name: str) -> Optional[str]:
+        """Extract digit character from template filename."""
+        name_lower = name.lower()
+
+        for d in '0123456789':
+            if f'd{d}' in name_lower or f'_{d}' in name_lower or f'digit_{d}' in name_lower:
+                return d
+
+        match = re.search(r'(\d)', name)
+        if match:
+            return match.group(1)
+
+        return None
+
+    def _preprocess_template(self, img: np.ndarray) -> Optional[np.ndarray]:
+        """Preprocess a template image for matching."""
+        if img is None or img.size == 0:
+            return None
+
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, WHITE_HSV_LOWER, WHITE_HSV_UPPER)
+
+        kernel = np.ones((2, 2), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        if not contours:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+            contours, _ = cv2.findContours(
+                binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+        if not contours:
+            return None
+
+        x_min, y_min = float('inf'), float('inf')
+        x_max, y_max = 0, 0
+        for cnt in contours:
+            x, y, cw, ch = cv2.boundingRect(cnt)
+            x_min = min(x_min, x)
+            y_min = min(y_min, y)
+            x_max = max(x_max, x + cw)
+            y_max = max(y_max, y + ch)
+
+        padding = 3
+        x_min = max(0, x_min - padding)
+        y_min = max(0, y_min - padding)
+        x_max = min(img.shape[1], x_max + padding)
+        y_max = min(img.shape[0], y_max + padding)
+
+        cropped = mask[y_min:y_max, x_min:x_max]
+
+        if cropped.size == 0:
+            return None
+
+        resized = cv2.resize(cropped, DIGIT_TEMPLATE_SIZE, interpolation=cv2.INTER_AREA)
+        _, binary = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
+
+        return binary
+
+    def recognize(
+        self, digit_img: np.ndarray, threshold: float = TEMPLATE_SIMILARITY_THRESHOLD
+    ) -> Tuple[Optional[str], float]:
+        """
+        Recognize a digit by comparing against all templates.
+
+        Args:
+            digit_img: Image of a single digit (white on dark background)
+            threshold: Minimum similarity threshold (0-1)
+
+        Returns:
+            Tuple of (recognized_digit, confidence) or (best_match, best_score)
+        """
+        if digit_img is None or digit_img.size == 0:
+            return None, 0.0
+
+        processed = self._preprocess_digit_for_matching(digit_img)
+
+        if processed is None or processed.size == 0:
+            return None, 0.0
+
+        best_digit = None
+        best_score = 0.0
+
+        for digit_char, templates in self._templates.items():
+            max_for_digit = 0.0
+            for template in templates:
+                score = self._compute_similarity(processed, template)
+                if score > max_for_digit:
+                    max_for_digit = score
+
+            if max_for_digit > best_score:
+                best_score = max_for_digit
+                best_digit = digit_char
+
+        if best_score >= threshold:
+            return best_digit, best_score
+
+        return best_digit, best_score
+
+    def _preprocess_digit_for_matching(self, digit_img: np.ndarray) -> Optional[np.ndarray]:
+        """Preprocess a digit image for template matching."""
+        if digit_img is None or digit_img.size == 0:
+            return None
+
+        hsv = cv2.cvtColor(digit_img, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, WHITE_HSV_LOWER, WHITE_HSV_UPPER)
+
+        kernel = np.ones((2, 2), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        if not contours:
+            gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
+            _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+            contours, _ = cv2.findContours(
+                binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+        if not contours:
+            return None
+
+        x_min, y_min = float('inf'), float('inf')
+        x_max, y_max = 0, 0
+        for cnt in contours:
+            x, y, cw, ch = cv2.boundingRect(cnt)
+            x_min = min(x_min, x)
+            y_min = min(y_min, y)
+            x_max = max(x_max, x + cw)
+            y_max = max(y_max, y + ch)
+
+        padding = 2
+        x_min = max(0, x_min - padding)
+        y_min = max(0, y_min - padding)
+        x_max = min(digit_img.shape[1], x_max + padding)
+        y_max = min(digit_img.shape[0], y_max + padding)
+
+        cropped = mask[y_min:y_max, x_min:x_max]
+
+        if cropped.size == 0:
+            return None
+
+        resized = cv2.resize(cropped, DIGIT_TEMPLATE_SIZE, interpolation=cv2.INTER_AREA)
+        _, binary = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
+
+        return binary
+
+    def _compute_similarity(self, img1: np.ndarray, img2: np.ndarray) -> float:
+        """Compute similarity between two binary images using XOR + SSIM."""
+        if img1.shape != img2.shape:
+            img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]))
+
+        xor_result = cv2.bitwise_xor(img1, img2)
+        total_pixels = img1.shape[0] * img1.shape[1]
+        different_pixels = np.sum(xor_result > 0)
+        xor_similarity = 1.0 - (different_pixels / total_pixels)
+
+        if total_pixels > 10:
+            try:
+                ssim_score = self._compute_ssim(img1, img2)
+                combined = 0.6 * xor_similarity + 0.4 * ssim_score
+                return float(combined)
+            except Exception:
+                pass
+
+        return float(xor_similarity)
+
+    def _compute_ssim(self, img1: np.ndarray, img2: np.ndarray) -> float:
+        """Compute SSIM-like structural similarity."""
+        g1 = img1.astype(np.float64)
+        g2 = img2.astype(np.float64)
+
+        c1 = (0.01 * 255) ** 2
+        c2 = (0.03 * 255) ** 2
+
+        mu1 = cv2.GaussianBlur(g1, (11, 11), 1.5)
+        mu2 = cv2.GaussianBlur(g2, (11, 11), 1.5)
+
+        mu1_sq = mu1 ** 2
+        mu2_sq = mu2 ** 2
+        mu1_mu2 = mu1 * mu2
+
+        sigma1_sq = cv2.GaussianBlur(g1 ** 2, (11, 11), 1.5) - mu1_sq
+        sigma2_sq = cv2.GaussianBlur(g2 ** 2, (11, 11), 1.5) - mu2_sq
+        sigma12 = cv2.GaussianBlur(g1 * g2, (11, 11), 1.5) - mu1_mu2
+
+        ssim_map = ((2 * mu1_mu2 + c1) * (2 * sigma12 + c2)) / \
+                   ((mu1_sq + mu2_sq + c1) * (sigma1_sq + sigma2_sq + c2))
+
+        return float(np.mean(ssim_map))
+
+    def get_template_count(self) -> int:
+        """Return the number of loaded templates."""
+        return sum(len(templates) for templates in self._templates.values())
+
+    def get_supported_digits(self) -> List[str]:
+        """Return list of digits that have templates."""
+        return sorted(self._templates.keys())
 
 
 class StaminaReader:
@@ -120,195 +420,27 @@ class StaminaReader:
         self.width = 1080
         self.height = 1920
 
-        self.stamina1_tpl = self._load_template(STAMINA1_TPL)
-        self.stamina2_tpl = self._load_template(STAMINA2_TPL)
-
-        self._digit_templates: Dict[str, np.ndarray] = {}
-        self._load_digit_templates()
+        self._template_lib = DigitTemplateLibrary()
+        self._bar_templates: Dict[str, np.ndarray] = {}
+        self._load_bar_templates()
 
         self._ocr_reader = None
         self._ocr_initialized = False
         self._ocr_available = False
 
-    def _load_digit_templates(self):
-        """Load digit templates from templates/digit_templates directory."""
-        templates_path = Path(DIGIT_TEMPLATES_DIR)
-        if not templates_path.exists():
-            logger.info(f"Digit templates directory not found: {DIGIT_TEMPLATES_DIR}")
-            return
-
-        count = 0
-        for img_file in templates_path.glob("*.png"):
-            name = img_file.stem
-            img = cv2.imread(str(img_file), cv2.IMREAD_COLOR)
-            if img is not None:
-                self._digit_templates[name] = img
-                count += 1
-
-        if count > 0:
-            logger.info(f"Loaded {count} digit templates from {DIGIT_TEMPLATES_DIR}")
-
-    def _extract_digit_regions(
-        self, number_region: np.ndarray
-    ) -> List[Tuple[int, int, int, int, np.ndarray]]:
-        """Extract individual digit regions from a number display area."""
-        gray = cv2.cvtColor(number_region, cv2.COLOR_BGR2GRAY)
-
-        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-        _, binary = cv2.threshold(blurred, 70, 255, cv2.THRESH_BINARY_INV)
-
-        kernel = np.ones((2, 2), np.uint8)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-
-        contours, _ = cv2.findContours(
-            binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        digit_regions = []
-        for cnt in sorted(contours, key=lambda c: cv2.boundingRect(c)[0]):
-            x, y, cw, ch = cv2.boundingRect(cnt)
-            area = cv2.contourArea(cnt)
-
-            if ch >= 25 and 8 <= cw <= 45 and area >= 100:
-                aspect = cw / ch
-                if 0.15 <= aspect <= 1.2:
-                    pad = 2
-                    dx1 = max(0, x - pad)
-                    dy1 = max(0, y - pad)
-                    dx2 = min(number_region.shape[1], x + cw + pad)
-                    dy2 = min(number_region.shape[0], y + ch + pad)
-
-                    digit_img = number_region[dy1:dy2, dx1:dx2]
-                    digit_regions.append((x, y, cw, ch, digit_img))
-
-        return digit_regions
-
-    def _recognize_digit_via_templates(
-        self, digit_img: np.ndarray
-    ) -> Optional[str]:
-        """Recognize a digit using template matching."""
-        if not self._digit_templates:
-            return None
-
-        digit_gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
-
-        best_match = None
-        best_score = 0
-
-        for name, tpl in self._digit_templates.items():
-            tpl_gray = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
-
-            th, tw = tpl_gray.shape[:2]
-            digit_resized = cv2.resize(digit_gray, (tw, th))
-
-            result = cv2.matchTemplate(
-                digit_resized, tpl_gray, cv2.TM_CCOEFF_NORMED
-            )
-            _, max_val, _, _ = cv2.minMaxLoc(result)
-
-            if max_val > best_score:
-                best_score = max_val
-                best_match = name
-
-        if best_score >= 0.5:
-            logger.debug(
-                f"Digit matched as '{best_match}' "
-                f"(score: {best_score:.3f})"
-            )
-            return best_match
-
-        return None
-
-    def _read_numbers_via_templates(
-        self, number_region: np.ndarray
-    ) -> Optional[str]:
-        """Read numbers using template-based digit recognition."""
-        if not self._digit_templates:
-            return None
-
-        digit_regions = self._extract_digit_regions(number_region)
-
-        if len(digit_regions) < 2:
-            logger.debug(
-                f"Not enough digit regions found: {len(digit_regions)}"
-            )
-            return None
-
-        recognized_parts = []
-        prev_x_end = None
-
-        for i, (x, y, cw, ch, digit_img) in enumerate(digit_regions):
-            if i > 0 and prev_x_end is not None:
-                gap = x - prev_x_end
-                avg_width = (digit_regions[i - 1][2] + cw) / 2
-                if gap > avg_width * 0.8:
-                    recognized_parts.append('/')
-
-            digit_name = self._recognize_digit_via_templates(digit_img)
-
-            if digit_name is not None:
-                digit_value = self._map_template_to_digit(digit_name)
-                recognized_parts.append(digit_value)
-            else:
-                recognized_parts.append('?')
-
-            prev_x_end = x + cw
-
-        result = ''.join(recognized_parts)
-        logger.debug(f"Template-based recognition: '{result}'")
-        return result
-
-    def _map_template_to_digit(self, template_name: str) -> str:
-        """Map a template name to its digit value."""
-        name_lower = template_name.lower()
-
-        mapping = {
-            'd0': '0', 'd1': '1', 'd2': '2', 'd3': '3', 'd4': '4',
-            'd5': '5', 'd6': '6', 'd7': '7', 'd8': '8', 'd9': '9',
-        }
-
-        for key, value in mapping.items():
-            if key in name_lower:
-                return value
-
-        digit_pattern = re.search(r'd(\d+)', name_lower)
-        if digit_pattern:
-            return digit_pattern.group(1)
-
-        return '?'
-
-    def _load_template(self, path: str) -> np.ndarray:
-        template_path = Path(path)
-        if not template_path.exists():
-            raise FileNotFoundError(f"Template not found: {path}")
-        template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
-        if template is None:
-            raise ValueError(f"Failed to load template: {path}")
-        h, w = template.shape[:2]
-        logger.debug(f"Template loaded: {path} ({w}x{h})")
-        return template
-
-    def _init_ocr(self):
-        """Initialize EasyOCR reader lazily."""
-        if self._ocr_initialized:
-            return
-
-        self._ocr_initialized = True
-
-        try:
-            import easyocr
-            logger.info("Initializing EasyOCR reader...")
-            self._ocr_reader = easyocr.Reader(['en'], gpu=False)
-            self._ocr_available = True
-            logger.info("EasyOCR reader initialized successfully")
-        except ImportError:
-            logger.info("EasyOCR not installed, using fallback recognition")
-            self._ocr_available = False
-        except Exception as e:
-            logger.warning(f"EasyOCR init failed: {e}")
-            self._ocr_available = False
+    def _load_bar_templates(self) -> None:
+        """Load stamina bar templates for localization."""
+        for key, cfg in STAMINA_CONFIG.items():
+            tpl_path = Path(cfg["bar_template"])
+            if tpl_path.exists():
+                img = _imread(str(tpl_path), cv2.IMREAD_COLOR)
+                if img is not None:
+                    self._bar_templates[key] = img
+                    logger.info(f"Loaded bar template for {key}: "
+                                f"{img.shape[1]}x{img.shape[0]}")
 
     def capture_screen(self) -> np.ndarray:
+        """Capture the current screen from the device."""
         png_bytes = self.device.shell("screencap -p", encoding=None, timeout=10)
         if not png_bytes or len(png_bytes) == 0:
             raise RuntimeError("Failed to capture screen")
@@ -319,123 +451,350 @@ class StaminaReader:
         self.height, self.width = image.shape[:2]
         return image
 
-    def _match_template(
-        self,
-        screen: np.ndarray,
-        template: np.ndarray,
-        roi: Tuple[float, float, float, float],
-        threshold: float,
-        label: str = "feature",
+    def _locate_bar(
+        self, screen: np.ndarray, stamina_key: str
     ) -> Optional[Tuple[int, int, int, int]]:
-        """Match template and return bounding box (x, y, w, h)."""
-        img_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-        tpl_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        """
+        Locate a stamina bar on screen using template matching.
 
-        rx1, ry1, rx2, ry2 = roi
+        Args:
+            screen: Full screen image
+            stamina_key: Key in STAMINA_CONFIG
+
+        Returns:
+            Tuple of (x, y, w, h) bounding box or None
+        """
+        cfg = STAMINA_CONFIG[stamina_key]
+        tpl = self._bar_templates.get(stamina_key)
+
+        if tpl is None:
+            logger.warning(f"No bar template for {stamina_key}")
+            return None
+
+        rx1, ry1, rx2, ry2 = cfg["bar_search_roi"]
         roi_x1 = int(self.width * rx1)
         roi_y1 = int(self.height * ry1)
         roi_x2 = int(self.width * rx2)
         roi_y2 = int(self.height * ry2)
 
-        roi_region = img_gray[roi_y1:roi_y2, roi_x1:roi_x2]
+        roi_x1 = max(0, roi_x1)
+        roi_y1 = max(0, roi_y1)
+        roi_x2 = min(self.width, roi_x2)
+        roi_y2 = min(self.height, roi_y2)
 
-        if roi_region.shape[0] < tpl_gray.shape[0] or roi_region.shape[1] < tpl_gray.shape[1]:
-            logger.warning(f"ROI too small for template matching: {label}")
+        if roi_x2 - roi_x1 < tpl.shape[1] or roi_y2 - roi_y1 < tpl.shape[0]:
+            logger.warning(f"Search ROI too small for {stamina_key}")
             return None
+
+        img_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+        tpl_gray = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
+
+        roi_region = img_gray[roi_y1:roi_y2, roi_x1:roi_x2]
 
         result = cv2.matchTemplate(roi_region, tpl_gray, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
-        if max_val >= threshold:
+        if max_val >= STAMINA_THRESHOLD:
             tpl_h, tpl_w = tpl_gray.shape
             abs_x = roi_x1 + max_loc[0]
             abs_y = roi_y1 + max_loc[1]
-            logger.info(
-                f"[{label}] Found at ({abs_x}, {abs_y}) "
+            logger.debug(
+                f"[{stamina_key}] Bar found at ({abs_x}, {abs_y}) "
                 f"size={tpl_w}x{tpl_h} conf={max_val:.3f}"
             )
             return (abs_x, abs_y, tpl_w, tpl_h)
         else:
-            logger.info(
-                f"[{label}] Not found. "
-                f"Max conf={max_val:.3f} (threshold={threshold})"
+            logger.debug(
+                f"[{stamina_key}] Bar not found. "
+                f"Max conf={max_val:.3f} (threshold={STAMINA_THRESHOLD})"
             )
             return None
 
-    def _read_numbers_ocr(
-        self, roi: np.ndarray
-    ) -> Optional[str]:
-        """Read numbers using EasyOCR."""
-        self._init_ocr()
+    def _extract_digit_regions(
+        self, number_region: np.ndarray
+    ) -> List[Tuple[int, int, int, int, np.ndarray, float]]:
+        """
+        Extract individual digit regions from a number display area.
 
-        if not self._ocr_available or self._ocr_reader is None:
-            return None
+        Uses white color segmentation with adaptive thresholding and
+        watershed-based splitting for merged digits.
 
-        try:
-            result = self._ocr_reader.readtext(roi, detail=0)
-            if result:
-                text = " ".join(result)
-                logger.debug(f"OCR result: '{text}'")
-                return text
-            return None
-        except Exception as e:
-            logger.warning(f"EasyOCR failed: {e}")
-            return None
+        Returns:
+            List of (x, y, w, h, digit_image, aspect_ratio) tuples
+        """
+        if number_region is None or number_region.size == 0:
+            return []
 
-    def _read_numbers_fallback(
-        self, roi: np.ndarray
-    ) -> Optional[str]:
-        """Fallback: count digit regions as a simple heuristic."""
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        hsv = cv2.cvtColor(number_region, cv2.COLOR_BGR2HSV)
+        white_mask = cv2.inRange(hsv, WHITE_HSV_LOWER, WHITE_HSV_UPPER)
 
-        _, binary = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY)
+        kernel_small = np.ones((1, 1), np.uint8)
+        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel_small)
+        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel_small)
 
-        contours, _ = cv2.findContours(
-            binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        digit_regions = self._extract_from_mask(white_mask, number_region)
+
+        if len(digit_regions) >= 3:
+            return digit_regions
+
+        gray = cv2.cvtColor(number_region, cv2.COLOR_BGR2GRAY)
+        for thresh_val in [160, 180, 200, 220]:
+            _, binary = cv2.threshold(
+                gray, thresh_val, 255, cv2.THRESH_BINARY
+            )
+
+            kernel = np.ones((1, 1), np.uint8)
+            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+
+            regions = self._extract_from_mask(binary, number_region)
+            regions = self._split_merged_regions(regions, number_region)
+
+            if len(regions) > len(digit_regions):
+                digit_regions = regions
+
+            if len(digit_regions) >= 3:
+                break
+
+        digit_regions = self._split_merged_regions(digit_regions, number_region)
+
+        if len(digit_regions) >= 1:
+            return digit_regions
+
+        logger.debug("All extraction strategies failed for digit extraction")
+        return []
+
+    def _split_merged_regions(
+        self,
+        regions: List[Tuple[int, int, int, int, np.ndarray, float]],
+        number_region: np.ndarray
+    ) -> List[Tuple[int, int, int, int, np.ndarray, float]]:
+        """Split large merged regions into individual digits."""
+        if len(regions) < 2:
+            return regions
+
+        split_regions = []
+        for x, y, w, h, digit_img, aspect in regions:
+            area = w * h
+            is_large = (w > h * 1.8 and w > 25) or area > 1500
+
+            if not is_large:
+                split_regions.append((x, y, w, h, digit_img, aspect))
+                continue
+
+            sub_regions = self._split_region_watershed(x, y, w, h, number_region)
+            if len(sub_regions) >= 2:
+                split_regions.extend(sub_regions)
+            else:
+                split_regions.append((x, y, w, h, digit_img, aspect))
+
+        split_regions.sort(key=lambda r: r[0])
+        return split_regions
+
+    def _split_region_watershed(
+        self,
+        x: int, y: int, w: int, h: int,
+        number_region: np.ndarray
+    ) -> List[Tuple[int, int, int, int, np.ndarray, float]]:
+        """Split a large region using distance transform + watershed."""
+        roi = number_region[y:y+h, x:x+w]
+
+        if roi.size == 0:
+            return []
+
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, WHITE_HSV_LOWER, WHITE_HSV_UPPER)
+
+        gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        _, binary_roi = cv2.threshold(gray_roi, 180, 255, cv2.THRESH_BINARY)
+
+        mask = cv2.bitwise_or(mask, binary_roi)
+
+        dist_transform = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+
+        _, peaks = cv2.threshold(
+            dist_transform, 0.3 * dist_transform.max(), 255, cv2.THRESH_BINARY
+        )
+        peaks = peaks.astype(np.uint8)
+
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            peaks, connectivity=8
         )
 
-        digit_count = 0
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            if h > 20 and w > 8:
-                digit_count += 1
+        if num_labels <= 2:
+            return []
 
-        if digit_count == 0:
-            return None
+        markers = np.zeros_like(mask)
+        for lid in range(1, num_labels):
+            cx = int(stats[lid, cv2.CC_STAT_LEFT] + stats[lid, cv2.CC_STAT_WIDTH] / 2)
+            cy = int(stats[lid, cv2.CC_STAT_TOP] + stats[lid, cv2.CC_STAT_HEIGHT] / 2)
+            cv2.circle(markers, (cx, cy), 3, int(lid), -1)
 
-        logger.debug(f"Fallback recognition: found {digit_count} regions")
-        return f"digits:{digit_count}"
+        markers = cv2.watershed(roi, markers)
+
+        unique_labels = set(markers.flatten())
+        unique_labels.discard(-1)
+        unique_labels.discard(0)
+
+        sub_regions = []
+        for label in unique_labels:
+            label_mask = np.zeros(markers.shape[:2], dtype=np.uint8)
+            label_mask[markers == label] = 255
+
+            contours, _ = cv2.findContours(
+                label_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            if not contours:
+                continue
+
+            lx, ly, lw, lh = cv2.boundingRect(contours[0])
+
+            if lw < 2 or lh < 3:
+                continue
+
+            sub_x = x + lx
+            sub_y = y + ly
+            sub_regions.append(
+                (sub_x, sub_y, lw, lh,
+                 roi[ly:ly+lh, lx:lx+lw],
+                 lw / lh if lh > 0 else 0)
+            )
+
+        return sub_regions
+
+    def _extract_from_mask(
+        self, mask: np.ndarray, number_region: np.ndarray
+    ) -> List[Tuple[int, int, int, int, np.ndarray, float]]:
+        """Extract digit regions from a binary mask."""
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
+            mask, connectivity=CONNECTIVITY
+        )
+
+        digit_regions = []
+        for label_id in range(1, num_labels):
+            x = stats[label_id, cv2.CC_STAT_LEFT]
+            y = stats[label_id, cv2.CC_STAT_TOP]
+            w = stats[label_id, cv2.CC_STAT_WIDTH]
+            h = stats[label_id, cv2.CC_STAT_HEIGHT]
+            area = stats[label_id, cv2.CC_STAT_AREA]
+
+            if area < MIN_DIGIT_AREA:
+                continue
+
+            if w < MIN_DIGIT_WIDTH or h < MIN_DIGIT_HEIGHT:
+                continue
+
+            aspect = w / h if h > 0 else 0
+
+            if aspect < 0.08 or aspect > 4.5:
+                continue
+
+            pad = 2
+            dx1 = max(0, x - pad)
+            dy1 = max(0, y - pad)
+            dx2 = min(number_region.shape[1], x + w + pad)
+            dy2 = min(number_region.shape[0], y + h + pad)
+
+            digit_img = number_region[dy1:dy2, dx1:dx2]
+            digit_regions.append((x, y, w, h, digit_img, aspect))
+
+        digit_regions.sort(key=lambda r: r[0])
+        return digit_regions
 
     def _read_numbers_from_region(
-        self, image: np.ndarray, region: Tuple[int, int, int, int]
+        self, number_region: np.ndarray
     ) -> Optional[str]:
         """
-        Read numbers from a region using template matching, then OCR as fallback.
+        Read numbers from a region using connected components + template matching.
 
         Args:
-            image: Full screen image
-            region: (x, y, w, h) bounding box
+            number_region: Image region containing stamina text
 
         Returns:
             Recognized text string or None
         """
-        x, y, w, h = region
-        roi = image[y:y+h, x:x+w]
-
-        if roi.size == 0:
+        if number_region is None or number_region.size == 0:
             return None
 
-        if self._digit_templates:
-            template_result = self._read_numbers_via_templates(roi)
-            if template_result is not None:
-                return template_result
+        digit_regions = self._extract_digit_regions(number_region)
 
-        ocr_result = self._read_numbers_ocr(roi)
-        if ocr_result is not None:
-            return ocr_result
+        if len(digit_regions) < 1:
+            logger.debug(
+                f"No digit regions found in region "
+                f"({number_region.shape[1]}x{number_region.shape[0]})"
+            )
+            return None
 
-        fallback_result = self._read_numbers_fallback(roi)
-        return fallback_result
+        recognized_parts = []
+        prev_x_end = None
+        img_height = number_region.shape[0]
+
+        for i, (x, y, w, h, digit_img, aspect) in enumerate(digit_regions):
+            if i > 0 and prev_x_end is not None:
+                gap = x - prev_x_end
+                avg_height = (digit_regions[i - 1][3] + h) / 2
+                avg_width = (digit_regions[i - 1][2] + w) / 2
+
+                if gap > avg_height * 0.4 and gap > avg_width * 0.5:
+                    recognized_parts.append('/')
+
+            if aspect < NARROW_ASPECT_RATIO and h > 5:
+                recognized_parts.append('/')
+                prev_x_end = x + w
+                continue
+
+            region_area = w * h
+            avg_digit_area = (img_height * 0.4) ** 2
+
+            if region_area > avg_digit_area * 2.5:
+                sub_digits = self._split_and_recognize(
+                    x, y, w, h, number_region
+                )
+                if sub_digits:
+                    recognized_parts.extend(sub_digits)
+                    prev_x_end = x + w
+                    continue
+
+            digit_char, confidence = self._template_lib.recognize(digit_img)
+
+            if digit_char is not None and confidence >= TEMPLATE_SIMILARITY_THRESHOLD:
+                recognized_parts.append(digit_char)
+                logger.debug(
+                    f"Digit[{i}] matched: '{digit_char}' "
+                    f"(confidence: {confidence:.3f}, aspect: {aspect:.2f})"
+                )
+            else:
+                recognized_parts.append('?')
+                logger.debug(
+                    f"Digit[{i}] unknown "
+                    f"(best: {digit_char}, conf: {confidence:.3f})"
+                )
+
+            prev_x_end = x + w
+
+        result = ''.join(recognized_parts)
+        logger.debug(f"Recognition result: '{result}'")
+        return result
+
+    def _split_and_recognize(
+        self, x: int, y: int, w: int, h: int,
+        number_region: np.ndarray
+    ) -> List[str]:
+        """Split a large region and recognize each sub-digit."""
+        sub_regions = self._split_region_watershed(x, y, w, h, number_region)
+
+        if len(sub_regions) < 2:
+            return []
+
+        result = []
+        for sx, sy, sw, sh, sub_img, sa in sub_regions:
+            digit_char, confidence = self._template_lib.recognize(sub_img)
+            if digit_char is not None and confidence >= TEMPLATE_SIMILARITY_THRESHOLD:
+                result.append(digit_char)
+            else:
+                result.append('?')
+
+        return result
 
     def _parse_stamina_text(
         self, text: Optional[str]
@@ -452,9 +811,8 @@ class StaminaReader:
         if not text:
             return (0, 0)
 
-        text = text.strip()
-
-        numbers = re.findall(r'\d+', text)
+        cleaned = text.replace('?', '')
+        numbers = re.findall(r'\d+', cleaned)
 
         if len(numbers) >= 2:
             current = int(numbers[0])
@@ -469,27 +827,64 @@ class StaminaReader:
             logger.warning(f"Could not parse stamina from: '{text}'")
             return (0, 0)
 
-    def read_stamina1(self, screen: np.ndarray) -> StaminaValue:
-        """Read stamina 1 value from screen."""
-        result = self._match_template(
-            screen, self.stamina1_tpl, STAMINA1_ROI,
-            STAMINA_THRESHOLD, "stamina1"
-        )
+    def _get_number_region(
+        self, screen: np.ndarray, stamina_key: str
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Get the number region for a stamina value.
 
-        if result is None:
-            logger.warning("Could not find stamina1 bar")
+        Uses bar template matching for robust localization,
+        falls back to fixed ROI if bar matching fails.
+
+        Returns:
+            Tuple of (x, y, w, h) or None
+        """
+        cfg = STAMINA_CONFIG[stamina_key]
+
+        bar_pos = self._locate_bar(screen, stamina_key)
+
+        if bar_pos is not None:
+            bx, by, bw, bh = bar_pos
+            ox, oy, ow, oh = cfg["number_relative_offset"]
+            nx = bx + int(bw * ox)
+            ny = by + int(bh * oy)
+            nw = int(bw * ow)
+            nh = int(bh * oh)
+
+            if nx >= 0 and ny >= 0 and nx + nw <= self.width and ny + nh <= self.height:
+                logger.debug(
+                    f"[{stamina_key}] Number region from bar: "
+                    f"({nx},{ny}) {nw}x{nh}"
+                )
+                return (nx, ny, nw, nh)
+
+        fx, fy, fw, fh = cfg["fallback_number_roi"]
+        if fx + fw <= self.width and fy + fh <= self.height:
+            logger.debug(
+                f"[{stamina_key}] Using fallback ROI: "
+                f"({fx},{fy}) {fw}x{fh}"
+            )
+            return (fx, fy, fw, fh)
+
+        logger.warning(f"[{stamina_key}] No valid region found")
+        return None
+
+    def read_stamina1(self, screen: np.ndarray) -> StaminaValue:
+        """Read stamina 1 (出征/Expedition) value from screen."""
+        region = self._get_number_region(screen, "stamina1")
+
+        if region is None:
+            logger.warning("Could not get stamina1 number region")
             return StaminaValue(name="stamina1")
 
-        x, y, w, h = result
-        ox1, oy1, ow, oh = STAMINA1_NUMBERS_OFFSET
-        number_x = x + int(w * ox1)
-        number_y = y + int(h * oy1)
-        number_w = int(w * ow)
-        number_h = int(h * oh)
+        nx, ny, nw, nh = region
+        number_region = screen[ny:ny + nh, nx:nx + nw]
 
-        number_region = (number_x, number_y, number_w, number_h)
+        if number_region.size == 0:
+            logger.warning("Stamina1 number region is empty")
+            return StaminaValue(name="stamina1")
 
-        text = self._read_numbers_from_region(screen, number_region)
+        text = self._read_numbers_from_region(number_region)
         current, max_val = self._parse_stamina_text(text)
 
         return StaminaValue(
@@ -499,26 +894,21 @@ class StaminaReader:
         )
 
     def read_stamina2(self, screen: np.ndarray) -> StaminaValue:
-        """Read stamina 2 value from screen."""
-        result = self._match_template(
-            screen, self.stamina2_tpl, STAMINA2_ROI,
-            STAMINA_THRESHOLD, "stamina2"
-        )
+        """Read stamina 2 (调教/Training) value from screen."""
+        region = self._get_number_region(screen, "stamina2")
 
-        if result is None:
-            logger.warning("Could not find stamina2 bar")
+        if region is None:
+            logger.warning("Could not get stamina2 number region")
             return StaminaValue(name="stamina2")
 
-        x, y, w, h = result
-        ox1, oy1, ow, oh = STAMINA2_NUMBERS_OFFSET
-        number_x = x + int(w * ox1)
-        number_y = y + int(h * oy1)
-        number_w = int(w * ow)
-        number_h = int(h * oh)
+        nx, ny, nw, nh = region
+        number_region = screen[ny:ny + nh, nx:nx + nw]
 
-        number_region = (number_x, number_y, number_w, number_h)
+        if number_region.size == 0:
+            logger.warning("Stamina2 number region is empty")
+            return StaminaValue(name="stamina2")
 
-        text = self._read_numbers_from_region(screen, number_region)
+        text = self._read_numbers_from_region(number_region)
         current, max_val = self._parse_stamina_text(text)
 
         return StaminaValue(
@@ -539,15 +929,15 @@ class StaminaReader:
         Returns:
             StaminaState with current values
         """
-        cache_duration = 5.0
-
         if (
             not force_refresh
             and self._cached_state is not None
-            and (time.time() - self._cache_time) < cache_duration
+            and (time.time() - self._cache_time) < CACHE_DURATION
         ):
             logger.debug("Returning cached stamina state")
             return self._cached_state
+
+        start_time = time.time()
 
         try:
             screen = self.capture_screen()
@@ -557,6 +947,12 @@ class StaminaReader:
 
         stamina1 = self.read_stamina1(screen)
         stamina2 = self.read_stamina2(screen)
+
+        elapsed = time.time() - start_time
+        logger.info(
+            f"Recognition took {elapsed:.3f}s - "
+            f"stamina1={stamina1}, stamina2={stamina2}"
+        )
 
         state = StaminaState(
             stamina1=stamina1,
