@@ -85,10 +85,10 @@ class DebugTab(Tab):
             self.target_function_edit.setText(self.config.get('target_function'))
         call_task_layout.addWidget(self.target_function_edit, stretch=1)
 
-        if self.config.get('target_task') in class_names:
+        if class_names and self.config.get('target_task') in class_names:
             self.tasks_combo_box.setText(self.config.get('target_task'))
             self.task_changed(self.config.get('target_task'))
-        else:
+        elif class_names:
             self.tasks_combo_box.setCurrentIndex(0)
             self.config['target_task'] = class_names[0]
 
