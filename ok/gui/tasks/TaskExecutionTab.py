@@ -183,6 +183,10 @@ class TaskExecutionTab(Tab):
         communicate.executor_paused.connect(self._on_executor_paused)
 
     def _get_task_type(self, task) -> str:
+        if not hasattr(og, 'executor') or og.executor is None:
+            return "onetime"
+        if hasattr(og.executor, 'trigger_tasks') and task in og.executor.trigger_tasks:
+            return "trigger"
         if hasattr(task, 'trigger_interval') and task.trigger_interval > 0:
             return "trigger"
         return "onetime"

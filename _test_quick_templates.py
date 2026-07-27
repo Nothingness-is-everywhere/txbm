@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT))
 
-from ok.automation.stamina_reader import DigitTemplateLibrary
+from ok.automation.stamina_reader import DigitTemplateLibrary, _imread
 
 lib = DigitTemplateLibrary()
 
@@ -35,7 +35,7 @@ for test_dir in test_dirs:
         continue
 
     for img_file in sorted(test_dir.glob("*.png")):
-        img = cv2.imread(str(img_file), cv2.IMREAD_COLOR)
+        img = _imread(str(img_file), cv2.IMREAD_COLOR)
         if img is None:
             continue
 
