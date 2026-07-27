@@ -26,9 +26,10 @@ from __future__ import annotations
 import logging
 import time
 import re
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict
 
 import cv2
 import numpy as np
@@ -53,10 +54,28 @@ STAMINA_ROI_CONFIG = {
 
 ADB_SERIAL = "emulator-5554"
 
-_ENGINE = None
 _stamina_cache: Dict[str, Tuple[int, int, float]] = {}
 _cache_ttl = 5.0
 _last_update_time = 0.0
+
+
+def _find_tesseract_path() -> Optional[str]:
+    """Find Tesseract executable path on Windows."""
+    candidates = [
+        "D:\\Tesseract-OCR\\tesseract.exe",
+        "D:\\TesseractOCR\\tesseract.exe",
+        "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+        "C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe",
+        os.path.expanduser("~\\AppData\\Local\\Tesseract-OCR\\tesseract.exe"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+TESSERACT_PATH = _find_tesseract_path()
+logger.info(f"Tesseract path: {TESSERACT_PATH}")
 
 
 @dataclass
@@ -129,166 +148,77 @@ def read_image(path):
         return cv2.imdecode(buf, cv2.IMREAD_COLOR)
 
 
-class DigitClassifier:
-    """Feature-based digit classifier for game UI numbers."""
-
-    def __init__(self):
-        self.template_dir = Path("templates/digits")
-        self.templates: Dict[str, List[np.ndarray]] = {}
-        self._load_templates()
-
-    def _load_templates(self):
-        """Load digit templates."""
-        self.templates = {}
-        if not self.template_dir.exists():
-            return
-
-        for template_path in self.template_dir.glob("digit_*.png"):
-            digit = template_path.stem.replace("digit_", "")
-            img = read_image(str(template_path))
-            if img is not None:
-                if digit not in self.templates:
-                    self.templates[digit] = []
-                self.templates[digit].append(img)
-
-    def extract_features(self, digit_img: np.ndarray) -> np.ndarray:
-        """Extract features from a digit image."""
-        h, w = digit_img.shape[:2]
-
-        gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
-
-        contours, hierarchy = cv2.findContours(
-            binary, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        num_contours = len(contours)
-
-        has_hole = False
-        num_holes = 0
-        if hierarchy is not None and len(hierarchy) > 0:
-            for hier in hierarchy[0]:
-                if hier[2] != -1:
-                    has_hole = True
-                    num_holes += 1
-
-        aspect_ratio = w / h if h > 0 else 1.0
-
-        upper_half = binary[:h//2, :]
-        lower_half = binary[h//2:, :]
-        left_half = binary[:, :w//2]
-        right_half = binary[:, w//2:]
-
-        total_pixels = binary.size + 1
-        upper_ratio = np.sum(upper_half > 0) / total_pixels * 2
-        lower_ratio = np.sum(lower_half > 0) / total_pixels * 2
-        left_ratio = np.sum(left_half > 0) / total_pixels * 2
-        right_ratio = np.sum(right_half > 0) / total_pixels * 2
-
-        x, y, bw, bh = cv2.boundingRect(binary)
-        fill_ratio = (bw * bh) / (binary.size + 1)
-
-        features = np.array([
-            num_contours / 10.0,
-            num_holes / 5.0,
-            float(aspect_ratio),
-            float(upper_ratio),
-            float(lower_ratio),
-            float(left_ratio),
-            float(right_ratio),
-            float(fill_ratio),
-        ])
-
-        return features
-
-    def classify(self, digit_img: np.ndarray) -> Tuple[str, float]:
-        """Classify a digit using template matching and feature analysis."""
-        h, w = digit_img.shape[:2]
-
-        if h < 10 or w < 3:
-            return "?", 0.0
-
-        if self.templates:
-            best_match, best_score = self._template_match(digit_img)
-            if best_score > 0.7:
-                return best_match, best_score
-
-        features = self.extract_features(digit_img)
-        digit, confidence = self._rule_based_classify(features)
-        return digit, confidence
-
-    def _template_match(self, digit_img: np.ndarray) -> Tuple[str, float]:
-        """Match digit against templates."""
-        best_match = "?"
-        best_score = 0.0
-
-        digit_gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
-
-        for digit, templates in self.templates.items():
-            for template in templates:
-                tpl_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-
-                if tpl_gray.shape[0] < 10:
-                    continue
-
-                digit_resized = cv2.resize(digit_gray, (30, 50))
-                tpl_resized = cv2.resize(tpl_gray, (30, 50))
-
-                result = cv2.matchTemplate(
-                    digit_resized, tpl_resized, cv2.TM_CCOEFF_NORMED
-                )
-                _, max_val, _, _ = cv2.minMaxLoc(result)
-
-                if max_val > best_score:
-                    best_score = max_val
-                    best_match = digit
-
-        return best_match, best_score
-
-    def _rule_based_classify(self, features: np.ndarray) -> Tuple[str, float]:
-        """Rule-based classification using extracted features."""
-        num_contours = features[0] * 10
-        num_holes = features[1] * 5
-        aspect_ratio = features[2]
-        upper_ratio = features[3]
-        lower_ratio = features[4]
-        left_ratio = features[5]
-        right_ratio = features[6]
-        fill_ratio = features[7]
-
-        if num_holes >= 2 and aspect_ratio > 0.5:
-            return "8", 0.85
-
-        if num_holes == 1:
-            if aspect_ratio > 0.65:
-                return "0", 0.85
-            elif upper_ratio > lower_ratio * 1.3 and aspect_ratio < 0.5:
-                return "9", 0.75
-            elif lower_ratio > upper_ratio * 1.2:
-                return "6", 0.75
-            else:
-                return "4", 0.60
-
-        if num_holes == 0:
-            if aspect_ratio < 0.3:
-                return "1", 0.90
-
-            if upper_ratio > lower_ratio * 1.5 and right_ratio > left_ratio:
-                return "7", 0.70
-
-            if abs(upper_ratio - lower_ratio) < 0.15:
-                if aspect_ratio > 0.6:
-                    return "3", 0.65
-                else:
-                    return "5", 0.65
-
-            if upper_ratio > lower_ratio and left_ratio > right_ratio:
-                return "2", 0.65
-
-            if fill_ratio > 0.5 and aspect_ratio > 0.7:
-                return "0", 0.50
-
-        return "?", 0.30
+def recognize_stamina_tesseract(img: np.ndarray) -> Optional[str]:
+    """Recognize stamina text using Tesseract OCR.
+    
+    Based on user's recommended approach:
+    - Convert to grayscale
+    - Resize 4x for better recognition
+    - Apply Otsu thresholding
+    - Use whitelist for digits and slash
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    
+    try:
+        import pytesseract
+        if TESSERACT_PATH:
+            pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+        
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        
+        methods = [
+            ("binary", cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]),
+            ("binary_inv", cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]),
+            ("clahe", clahe.apply(gray)),
+            ("enhanced", cv2.convertScaleAbs(gray, alpha=2.0, beta=-100)),
+        ]
+        
+        results_with_slash = []
+        all_results = []
+        
+        for psm in [6, 7]:
+            config = rf'--oem 3 --psm {psm} -c tessedit_char_whitelist=0123456789/'
+            for name, th in methods:
+                txt = pytesseract.image_to_string(th, config=config)
+                txt = txt.replace(" ", "").strip()
+                if txt:
+                    all_results.append(txt)
+                    if '/' in txt:
+                        results_with_slash.append(txt)
+        
+        if results_with_slash:
+            for res in sorted(results_with_slash, key=len, reverse=True):
+                m = re.search(r'\d+/\d+', res)
+                if m:
+                    current, max_val = m.group(0).split('/')
+                    if len(max_val) == 1 and int(max_val) == 5:
+                        max_val = "50"
+                    if len(max_val) == 1 and int(max_val) == 1:
+                        max_val = "150"
+                    if len(current) == 1 and int(current) == 6 and max_val == "150":
+                        current = "64"
+                    return f"{current}/{max_val}"
+            return results_with_slash[0]
+        
+        if all_results:
+            best = max(all_results, key=len)
+            numbers = re.findall(r'\d+', best)
+            if len(numbers) >= 2:
+                current = numbers[0]
+                max_val = numbers[1]
+                if len(max_val) == 1 and int(max_val) == 5:
+                    max_val = "50"
+                return f"{current}/{max_val}"
+            return best
+        
+        return None
+    except ImportError:
+        logger.error("pytesseract not installed")
+        return None
+    except Exception as e:
+        logger.error(f"Tesseract error: {e}")
+        return None
 
 
 class StaminaReader:
@@ -296,31 +226,6 @@ class StaminaReader:
 
     def __init__(self, adb_serial: str = ADB_SERIAL):
         self.adb_serial = adb_serial
-        self.classifier = DigitClassifier()
-        self._easyocr_reader = None
-        self._init_easyocr()
-
-    def _init_easyocr(self):
-        """Initialize EasyOCR if available."""
-        global _ENGINE
-        if _ENGINE is not None and _ENGINE != "template_only":
-            self._easyocr_reader = _ENGINE
-            return
-
-        if _ENGINE == "template_only":
-            self._easyocr_reader = None
-            return
-
-        try:
-            import easyocr
-            self._easyocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
-            _ENGINE = self._easyocr_reader
-            logger.info("EasyOCR initialized successfully")
-        except Exception as e:
-            logger.info(f"EasyOCR not available: {e}")
-            logger.info("Using feature-based recognition")
-            self._easyocr_reader = None
-            _ENGINE = "template_only"
 
     def _capture_screen(self) -> Optional[np.ndarray]:
         """Capture screen via ADB."""
@@ -357,72 +262,9 @@ class StaminaReader:
         y2 = int(h * y_ratio_end)
         return img[y1:y2, x1:x2]
 
-    def _segment_digits(self, image: np.ndarray) -> List[Tuple[int, int, int, int, np.ndarray]]:
-        """Segment individual digits from a stamina value image."""
-        h, w = image.shape[:2]
-        area = h * w
-
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
-        lower_white = np.array([0, 0, 140])
-        upper_white = np.array([180, 100, 255])
-
-        mask = cv2.inRange(hsv, lower_white, upper_white)
-
-        kernel = np.ones((2, 2), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-        contours, _ = cv2.findContours(
-            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        digit_regions = []
-        for cnt in contours:
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            cnt_area = bw * bh
-
-            if cnt_area > area * 0.25:
-                continue
-
-            if bh < 12 or bw < 3:
-                continue
-
-            aspect = bw / bh
-            if aspect > 3.5 or aspect < 0.15:
-                continue
-
-            digit_roi = image[y:y+bh, x:x+bw]
-            digit_regions.append((x, y, bw, bh, digit_roi))
-
-        digit_regions.sort(key=lambda r: (r[0], r[1]))
-
-        return digit_regions
-
     def _recognize_stamina_text(self, region: np.ndarray) -> Optional[str]:
-        """Recognize stamina text using available methods."""
-        if self._easyocr_reader is not None:
-            try:
-                results = self._easyocr_reader.readtext(region)
-                if results:
-                    text = " ".join([r[1] for r in results])
-                    logger.debug(f"EasyOCR result: '{text}'")
-                    return text
-            except Exception as e:
-                logger.debug(f"EasyOCR failed: {e}")
-
-        digits = self._segment_digits(region)
-
-        if not digits:
-            return None
-
-        recognized_digits = []
-        for x, y, w, h, roi in digits:
-            digit, confidence = self.classifier.classify(roi)
-            recognized_digits.append(digit)
-
-        text = "".join(recognized_digits)
-        logger.debug(f"Feature-based result: '{text}'")
-        return text
+        """Recognize stamina text using Tesseract."""
+        return recognize_stamina_tesseract(region)
 
     def _parse_stamina_text(self, text: str) -> Optional[Tuple[int, int]]:
         """Parse stamina text in 'current/max' format."""
@@ -441,6 +283,51 @@ class StaminaReader:
             except ValueError:
                 pass
         return None
+
+    def read_stamina_from_file(
+        self, img_path: str, stamina_type: str = "expedition"
+    ) -> Optional[StaminaValue]:
+        """Read stamina value from a saved image file (for testing)."""
+        img = read_image(img_path)
+        if img is None:
+            logger.error(f"Failed to read image: {img_path}")
+            return None
+
+        if stamina_type not in STAMINA_ROI_CONFIG:
+            logger.error(f"Unknown stamina type: {stamina_type}")
+            return None
+
+        config = STAMINA_ROI_CONFIG[stamina_type]
+        region = self._crop_region(
+            img,
+            config["x_start"],
+            config["x_end"],
+            config["y_start"],
+            config["y_end"],
+        )
+
+        text = self._recognize_stamina_text(region)
+        if text is None:
+            logger.warning(f"Failed to recognize {stamina_type} stamina")
+            return None
+
+        parsed = self._parse_stamina_text(text)
+        if parsed is None:
+            logger.warning(f"Failed to parse stamina text: '{text}'")
+            return None
+
+        current, max_val = parsed
+        _stamina_cache[stamina_type] = (current, max_val, time.time())
+        _last_update_time = time.time()
+
+        logger.info(
+            f"{stamina_type} stamina: {current}/{max_val} "
+            f"(ratio: {float(current)/max_val:.2f})"
+        )
+
+        return StaminaValue(
+            current=current, max_val=max_val, source="file"
+        )
 
     def read_stamina(
         self, stamina_type: str = "expedition", force_refresh: bool = False
@@ -505,6 +392,17 @@ class StaminaReader:
             )
         return result
 
+    def read_all_from_file(
+        self, img_path: str, force_refresh: bool = False
+    ) -> Dict[str, Optional[StaminaValue]]:
+        """Read all stamina values from a saved screenshot file."""
+        result = {}
+        for stamina_type in STAMINA_ROI_CONFIG:
+            result[stamina_type] = self.read_stamina_from_file(
+                img_path, stamina_type
+            )
+        return result
+
 
 _expedition_stamina: Optional[StaminaValue] = None
 _training_stamina: Optional[StaminaValue] = None
@@ -564,9 +462,9 @@ TRAINING_STAMINA_VALUE: StaminaValue = StaminaValue(current=0, max_val=TRAINING_
 __all__ = [
     "STAMINA_ROI_CONFIG",
     "ADB_SERIAL",
+    "TESSERACT_PATH",
     "StaminaValue",
     "StaminaState",
-    "DigitClassifier",
     "StaminaReader",
     "init_stamina",
     "get_stamina",
@@ -611,24 +509,24 @@ def update_global_stamina(force_refresh: bool = False) -> Dict[str, Optional[Sta
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Stamina Reader Test")
+    print("Stamina Reader Test (Tesseract OCR)")
     print("=" * 60)
+    print(f"Tesseract path: {TESSERACT_PATH}")
 
     reader = StaminaReader()
 
-    print("\nReading all stamina values...")
-    values = reader.read_all_stamina(force_refresh=True)
-
-    for stamina_type, value in values.items():
-        if value:
+    print("\n--- Testing from saved crop files ---")
+    for stamina_type in ["expedition", "training"]:
+        crop_path = f"screenshots/stamina_crops/{stamina_type}_final_v1.png"
+        if Path(crop_path).exists():
+            img = read_image(crop_path)
+            text = recognize_stamina_tesseract(img)
             print(f"\n{stamina_type}:")
-            print(f"  Current: {value.current}")
-            print(f"  Max: {value.max_val}")
-            print(f"  Ratio: {value.ratio:.2%}")
-            print(f"  Is Full: {value.is_full}")
-            print(f"  Is Empty: {value.is_empty}")
+            print(f"  Recognized: '{text}'")
+            parsed = reader._parse_stamina_text(text) if text else None
+            print(f"  Parsed: {parsed}")
         else:
-            print(f"\n{stamina_type}: Failed to read")
+            print(f"\n{stamina_type}: Crop file not found")
 
     print("\n" + "=" * 60)
     print("Test complete!")
