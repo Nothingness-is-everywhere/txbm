@@ -26,6 +26,7 @@ class StartController(QObject):
         windows_config = app_config.get('windows') or {}
         self.start_exe = windows_config.get('start_exe', True)
         self.start_method = windows_config.get('start_method', WINDOWS_START_METHOD_START)
+        self._is_starting = False
 
     @staticmethod
     def _mark_task_enabled(task):
@@ -37,9 +38,16 @@ class StartController(QObject):
         communicate.task.emit(task)
 
     def start(self, task=None, exit_after=False):
+        if self._is_starting or (og.executor is not None and not og.executor.paused):
+            logger.info(f"start: already starting or running, ignore. _is_starting={self._is_starting}, paused={og.executor.paused if og.executor else 'N/A'}")
+            return
         self.handler.post(lambda: self.do_start(task, exit_after))
 
     def do_start(self, task=None, exit_after=False):
+        if self._is_starting or (og.executor is not None and not og.executor.paused):
+            logger.info(f"do_start: already starting or running, ignore. _is_starting={self._is_starting}, paused={og.executor.paused if og.executor else 'N/A'}")
+            return False
+        self._is_starting = True
         communicate.starting_emulator.emit(False, None, self.start_timeout)
         tasks_to_enable = []
         try:
@@ -63,20 +71,10 @@ class StartController(QObject):
                 self._mark_task_enabled(task)
                 communicate.starting_emulator.emit(True, None, 0)
                 return True
-        except Exception as e:
-            logger.error(f'do_start resume exception: {e}', e)
-            communicate.starting_emulator.emit(True, self.tr(f'Start failed: {e}'), 0)
-            return False
 
-        try:
             logger.info(f'do_start: call do_refresh {self.start_exe}')
             og.device_manager.do_refresh(True)
-        except Exception as e:
-            logger.error(f'do_start do_refresh exception: {e}', e)
-            communicate.starting_emulator.emit(True, self.tr(str(e)), 0)
-            return False
 
-        try:
             if self.start_exe:
                 if not self.start_device(initial_refresh_done=True):
                     return False
@@ -108,6 +106,8 @@ class StartController(QObject):
             logger.error(f'do_start exception: {e}', e)
             communicate.starting_emulator.emit(True, self.tr(f'Start failed: {e}'), 0)
             return False
+        finally:
+            self._is_starting = False
 
     def _wait_until_device_ready(self, refresh_first=True):
         wait_until = time.time() + self.start_timeout

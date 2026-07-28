@@ -440,6 +440,16 @@ class MainWindow(FluentWindow):
         logger.info(f'show startup version change on about tab {version_change.title}')
         self.switchTo(self.about_tab)
 
+    def is_auto_start_enabled(self):
+        env_val = os.environ.get('AUTO_START_ON_GUI')
+        if env_val is not None:
+            lower_val = env_val.lower().strip()
+            if lower_val in ('true', '1', 'yes', 'y'):
+                return True
+            elif lower_val in ('false', '0', 'no', 'n'):
+                return False
+        return self.config.get('auto_start_on_gui', True)
+
     def showEvent(self, event):
         first_show = event.type() == QEvent.Show and not self.shown
         if first_show:
@@ -465,9 +475,12 @@ class MainWindow(FluentWindow):
             if args.get('task') > 0:
                 task_index = args.get('task') - 1
                 logger.info(f'start with params {task_index} {args.get("exit")}')
-                self.app.start_controller.start(args.get('task') - 1, exit_after=args.get('exit'))
-            elif self.basic_global_config.get('Auto Start Game When App Starts'):
-                self.app.start_controller.start()
+                QTimer.singleShot(0, lambda: self.app.start_controller.start(args.get('task') - 1, exit_after=args.get('exit')))
+            elif self.is_auto_start_enabled():
+                logger.info(f'AUTO_START_ON_GUI enabled, triggering auto start')
+                QTimer.singleShot(0, lambda: self.app.start_controller.start())
+            else:
+                logger.info(f'AUTO_START_ON_GUI disabled, skip auto start')
             # Check for .okscript file in command line arguments
             self._check_okscript_args()
         super().showEvent(event)

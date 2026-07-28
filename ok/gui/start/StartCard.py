@@ -46,11 +46,13 @@ class StartCard(SettingCard):
         communicate.executor_paused.connect(self.update_status)
         communicate.window.connect(self.update_status)
         communicate.task.connect(self.update_task)
+        communicate.starting_emulator.connect(self.on_starting_emulator)
 
         self.handler = Handler(exit_event, "StartCard")
         self.current_hotkey = "UNINIT"
         self.handler.post(self.check_hotkey, 0.1)
         logger.debug('basic_options.start/stop: {}'.format(self.basic_options.get('Start/Stop')))
+        self._is_starting = False
 
     def status_clicked(self):
         if not og.executor.paused:
@@ -62,12 +64,25 @@ class StartCard(SettingCard):
                 communicate.tab.emit("start")
             self.status_bar.show()
 
-    @staticmethod
-    def clicked():
+    def clicked(self):
+        if self._is_starting:
+            logger.info("clicked: starting in progress, ignore")
+            return
         if not og.executor.paused:
             og.executor.pause()
         else:
             og.app.start_controller.start()
+
+    def on_starting_emulator(self, done, error, seconds_left):
+        if done:
+            self._is_starting = False
+            self.start_button.setEnabled(True)
+            self.update_status()
+        else:
+            self._is_starting = True
+            self.start_button.setEnabled(False)
+            self.start_button.setText(self.tr("Starting..."))
+            self.start_button.setIcon(FluentIcon.LOADING)
 
     def update_task(self, task):
         self.update_status()

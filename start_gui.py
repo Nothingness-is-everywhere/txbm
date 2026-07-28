@@ -30,6 +30,7 @@ config = {
     "trigger_tasks": [
         ["ok_tasks.NetworkErrorHandler", "NetworkErrorHandler"],
     ],
+    "auto_start_on_gui": True,
 }
 
 if __name__ == "__main__":
