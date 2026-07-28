@@ -228,11 +228,36 @@ class StaminaReader:
         self.adb_serial = adb_serial
 
     def _capture_screen(self) -> Optional[np.ndarray]:
-        """Capture screen via ADB."""
+        """Capture screen via ADB.
+
+        Tries the configured serial first; if it fails, falls back to any
+        available online device.
+        """
         try:
             import adbutils
             adb = adbutils.AdbClient()
-            device = adb.device(self.adb_serial)
+
+            device = None
+            candidates = [self.adb_serial]
+            for d in adb.device_list():
+                if d.serial not in candidates:
+                    candidates.append(d.serial)
+
+            for serial in candidates:
+                try:
+                    candidate = adb.device(serial=serial)
+                    _ = candidate.shell("echo ok")  # quick liveness check
+                    device = candidate
+                    logger.info(f"Using device: {serial}")
+                    break
+                except Exception as e:
+                    logger.info(f"Device {serial} unavailable: {e}")
+                    continue
+
+            if device is None:
+                logger.error("No online ADB device found")
+                return None
+
             img = device.screenshot()
 
             img_array = np.array(img)
