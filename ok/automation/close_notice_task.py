@@ -137,10 +137,21 @@ class NoticeCloser:
 
     def find_post_close(
         self, screen: np.ndarray
+    ) -> bool:
+        """Detect if current screen is in post-close state (for state recognition only)."""
+        result = self._match_template(
+            screen, self.post_close_tpl, POST_CLOSE_ROI, POST_CLOSE_THRESHOLD,
+            "post_close_state"
+        )
+        return result is not None
+
+    def find_confirm_button(
+        self, screen: np.ndarray
     ) -> Optional[Tuple[int, int, float]]:
+        """Find the confirm/continue button in post-close screen (for clicking)."""
         return self._match_template(
             screen, self.post_close_tpl, POST_CLOSE_ROI, POST_CLOSE_THRESHOLD,
-            "post_close"
+            "confirm_button"
         )
 
     def click(self, x: int, y: int) -> None:
@@ -156,15 +167,14 @@ class NoticeCloser:
 
     def close_notice_popup(self) -> bool:
         """
-        Two-phase notice handling:
-          1. Detect notice popup → click close button
-          2. Detect post-close screen → click once
-
+        Close notice popup if detected (Step B).
+        
         Returns:
-            True if both phases completed successfully.
+            True if notice was detected and closed, or no notice detected (skip).
+            False on critical error.
         """
         logger.info("=" * 50)
-        logger.info("Phase 1: Detect & Close Notice Popup")
+        logger.info("Step B: Detect & Close Notice Popup")
         logger.info("=" * 50)
 
         try:
@@ -176,73 +186,198 @@ class NoticeCloser:
         notice_result = self.find_notice_popup(screen)
 
         if notice_result is None:
-            logger.info(
-                "No notice popup detected - "
-                "skipping Phase 1 (popup not visible)"
-            )
-        else:
-            logger.info("Notice popup detected - searching for close button...")
-            close_result = self.find_close_button(screen)
+            logger.info("skip: No notice popup detected")
+            logger.info("=" * 50)
+            logger.info("close_notice_popup finished (skipped)")
+            logger.info("=" * 50)
+            return True
 
-            if close_result is not None:
-                cx, cy, _ = close_result
-            else:
-                cx = int(self.width * DEFAULT_CLOSE_POS[0])
-                cy = int(self.height * DEFAULT_CLOSE_POS[1])
-                logger.info(
-                    "Close button not found via template, "
-                    f"using default position ({cx}, {cy})"
-                )
+        logger.info(f"Notice popup detected (conf={notice_result[2]:.3f}), proceeding to close")
 
-            jx, jy = self._jitter(cx, cy, r=12)
-            logger.info(f"Clicking close button at ({jx}, {jy})")
-            self.click(jx, jy)
+        close_result = self.find_close_button(screen)
 
-            d1 = self._delay(PHASE1_DELAY)
-            logger.info(f"Waiting {d1:.2f}s for popup to dismiss...")
-            time.sleep(d1)
+        if close_result is None:
+            logger.warning("Close button not found via template, skipping close to avoid misclick")
+            logger.info("=" * 50)
+            logger.info("close_notice_popup finished (close button not found)")
+            logger.info("=" * 50)
+            return True
 
-            logger.info("Phase 1 complete - close button clicked")
+        cx, cy, _ = close_result
+        jx, jy = self._jitter(cx, cy, r=12)
+        logger.info(f"Clicking close button at ({jx}, {jy})")
+        self.click(jx, jy)
 
-        logger.info("=" * 50)
-        logger.info("Phase 2: Detect Post-Close Screen & Click")
-        logger.info("=" * 50)
+        d1 = self._delay(0.5)
+        logger.info(f"Waiting {d1:.2f}s for popup to dismiss...")
+        time.sleep(d1)
 
+        # Verify close
         try:
             screen2 = self.capture_screen()
+            notice_still_there = self.find_notice_popup(screen2)
+            if notice_still_there is not None:
+                logger.warning(f"Notice popup still visible after close click (conf={notice_still_there[2]:.3f}), retrying once...")
+                close_result2 = self.find_close_button(screen2)
+                if close_result2 is not None:
+                    cx2, cy2, _ = close_result2
+                    jx2, jy2 = self._jitter(cx2, cy2, r=12)
+                    logger.info(f"Retry clicking close button at ({jx2}, {jy2})")
+                    self.click(jx2, jy2)
+                    time.sleep(self._delay(0.3))
+                else:
+                    logger.warning("Close button not found during retry, giving up")
         except Exception as e:
-            logger.warning(f"Phase 2 screen capture failed: {e}")
-            screen2 = None
-
-        if screen2 is not None:
-            post_result = self.find_post_close(screen2)
-
-            if post_result is not None:
-                px, py, conf = post_result
-                jx2, jy2 = self._jitter(px, py, r=10)
-                logger.info(
-                    f"Post-close screen detected (conf={conf:.3f}) - "
-                    f"clicking at ({jx2}, {jy2})"
-                )
-                self.click(jx2, jy2)
-
-                d2 = self._delay(PHASE2_DELAY)
-                logger.info(f"Waiting {d2:.2f}s...")
-                time.sleep(d2)
-
-                logger.info("Phase 2 complete - post-close click done")
-            else:
-                logger.info(
-                    "Post-close screen not detected - "
-                    "skipping Phase 2"
-                )
-        else:
-            logger.info("No screen available for Phase 2 - skipping")
+            logger.warning(f"Notice close verification failed: {e}")
 
         logger.info("=" * 50)
-        logger.info("close_notice_popup task finished")
+        logger.info("close_notice_popup finished")
         logger.info("=" * 50)
         return True
+
+    def _detect_checkin_screen(self, screen: np.ndarray) -> bool:
+        """Detect if we're on the check-in screen."""
+        try:
+            from ok.automation.checkin_close_task import CheckInCloser
+            checkin_closer = CheckInCloser()
+            return checkin_closer.find_checkin_screen(screen) is not None
+        except Exception as e:
+            logger.debug(f"Check-in detection failed: {e}")
+            return False
+
+    def _detect_main_screen(self, screen: np.ndarray) -> bool:
+        """Detect if we're already on the main screen."""
+        try:
+            # Check for stamina values or other main screen features
+            from ok.automation.stamina_reader import get_stamina, update_global_stamina
+            update_global_stamina()
+            state = get_stamina(force_refresh=True)
+            if state.stamina1.value > 0 or state.stamina2.value > 0:
+                return True
+            
+            # Check for back button (indicates navigable screen)
+            from ok.automation.back_navigation_task import BackButtonNavigator
+            navigator = BackButtonNavigator()
+            return navigator.find_back_button(screen) is not None
+        except Exception as e:
+            logger.debug(f"Main screen detection failed: {e}")
+            return False
+
+    def process_post_close_screen(self, 
+                                  short_retries: int = 3, 
+                                  short_delay: float = 0.5,
+                                  long_wait: float = 3.0,
+                                  long_poll_interval: float = 0.5) -> str:
+        """
+        Process post-close screen (Step C - mandatory).
+        Two-layer retry strategy:
+          Layer 1: Short retries (3 attempts, 0.5s interval)
+          Layer 2: Long wait window (3s, 0.5s poll interval) - also detects check-in/main screen
+        
+        Returns:
+            'success': Confirm button clicked successfully
+            'bypass': Skipped because check-in or main screen detected
+            'warning': Timed out but proceeding conservatively (no blind clicks)
+            'failed': Critical error (screenshot consistently failed)
+        """
+        logger.info("=" * 50)
+        logger.info("Step C: Process Post-Close Screen (Mandatory)")
+        logger.info("=" * 50)
+
+        # Layer 1: Short retries
+        logger.info(f"Layer 1: Short retries ({short_retries} attempts, {short_delay}s interval)")
+        for attempt in range(short_retries):
+            try:
+                screen = self.capture_screen()
+                
+                # Check if already at check-in or main screen (bypass)
+                if self._detect_checkin_screen(screen):
+                    logger.info(f"Bypass: Check-in screen detected, Step C completed")
+                    logger.info("=" * 50)
+                    logger.info("process_post_close_screen finished (bypass - check-in detected)")
+                    logger.info("=" * 50)
+                    return 'bypass'
+                
+                if self._detect_main_screen(screen):
+                    logger.info(f"Bypass: Main screen detected, Step C completed")
+                    logger.info("=" * 50)
+                    logger.info("process_post_close_screen finished (bypass - main screen detected)")
+                    logger.info("=" * 50)
+                    return 'bypass'
+                
+                # Try to find confirm button
+                confirm_result = self.find_confirm_button(screen)
+                if confirm_result is not None:
+                    px, py, conf = confirm_result
+                    jx, jy = self._jitter(px, py, r=10)
+                    logger.info(f"Confirm button found (conf={conf:.3f}) on attempt {attempt+1}, clicking at ({jx}, {jy})")
+                    self.click(jx, jy)
+                    time.sleep(self._delay(0.3))
+                    logger.info("=" * 50)
+                    logger.info("process_post_close_screen finished successfully")
+                    logger.info("=" * 50)
+                    return 'success'
+                
+                logger.info(f"Confirm button not found on attempt {attempt+1}, retrying in {short_delay}s...")
+                
+            except Exception as e:
+                logger.warning(f"Process post-close attempt {attempt+1} failed: {e}")
+            
+            if attempt < short_retries - 1:
+                time.sleep(short_delay)
+
+        # Layer 2: Long wait window
+        logger.info(f"Layer 2: Long wait window ({long_wait}s, {long_poll_interval}s poll interval)")
+        long_wait_end = time.time() + long_wait
+        long_attempt = 0
+        
+        while time.time() < long_wait_end:
+            long_attempt += 1
+            try:
+                screen = self.capture_screen()
+                
+                # Check if already at check-in or main screen (bypass)
+                if self._detect_checkin_screen(screen):
+                    logger.info(f"Bypass on long wait attempt {long_attempt}: Check-in screen detected")
+                    logger.info("=" * 50)
+                    logger.info("process_post_close_screen finished (bypass - check-in detected)")
+                    logger.info("=" * 50)
+                    return 'bypass'
+                
+                if self._detect_main_screen(screen):
+                    logger.info(f"Bypass on long wait attempt {long_attempt}: Main screen detected")
+                    logger.info("=" * 50)
+                    logger.info("process_post_close_screen finished (bypass - main screen detected)")
+                    logger.info("=" * 50)
+                    return 'bypass'
+                
+                # Try to find confirm button
+                confirm_result = self.find_confirm_button(screen)
+                if confirm_result is not None:
+                    px, py, conf = confirm_result
+                    jx, jy = self._jitter(px, py, r=10)
+                    logger.info(f"Confirm button found on long wait attempt {long_attempt} (conf={conf:.3f}), clicking at ({jx}, {jy})")
+                    self.click(jx, jy)
+                    time.sleep(self._delay(0.3))
+                    logger.info("=" * 50)
+                    logger.info("process_post_close_screen finished successfully (found in long wait)")
+                    logger.info("=" * 50)
+                    return 'success'
+                
+                logger.debug(f"Long wait attempt {long_attempt}: No confirm button, no check-in, no main screen")
+                
+            except Exception as e:
+                logger.warning(f"Long wait attempt {long_attempt} failed: {e}")
+            
+            time.sleep(long_poll_interval)
+
+        # All attempts exhausted - return warning (not failed, proceed conservatively)
+        logger.warning("Step C timeout: No confirm button found after short retries + long wait")
+        logger.warning("Proceeding conservatively without blind clicks")
+        logger.info("=" * 50)
+        logger.info("process_post_close_screen finished (WARNING)")
+        logger.info("=" * 50)
+        return 'warning'
 
 
 def run_task():

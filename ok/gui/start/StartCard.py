@@ -82,7 +82,7 @@ class StartCard(SettingCard):
             self._is_starting = True
             self.start_button.setEnabled(False)
             self.start_button.setText(self.tr("Starting..."))
-            self.start_button.setIcon(FluentIcon.LOADING)
+            self.start_button.setIcon(FluentIcon.SYNC)
 
     def update_task(self, task):
         self.update_status()
