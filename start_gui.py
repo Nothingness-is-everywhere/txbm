@@ -24,7 +24,9 @@ config = {
     "adb": {
         "packages": ["com.pinkcore.tkfm"],
     },
-    "onetime_tasks": [],
+    "onetime_tasks": [
+        ["ok.automation.game_startup_task", "GameStartupTask"],
+    ],
     "trigger_tasks": [],
 }
 
