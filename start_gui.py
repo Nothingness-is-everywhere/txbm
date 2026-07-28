@@ -27,7 +27,9 @@ config = {
     "onetime_tasks": [
         ["ok.automation.game_startup_task", "GameStartupTask"],
     ],
-    "trigger_tasks": [],
+    "trigger_tasks": [
+        ["ok_tasks.NetworkErrorHandler", "NetworkErrorHandler"],
+    ],
 }
 
 if __name__ == "__main__":
