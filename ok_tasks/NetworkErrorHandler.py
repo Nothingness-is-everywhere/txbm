@@ -55,9 +55,9 @@ DEFAULT_CONFIG = {
     "_enabled": False,
     "popup_template_path": "templates/network_popup.png",
     "confirm_button_template_path": "templates/network_confirm_button.png",
-    "popup_threshold": 0.80,
-    "button_threshold": 0.85,
-    "match_scales": [0.8, 0.9, 1.0, 1.1, 1.2],
+    "popup_threshold": 0.55,
+    "button_threshold": 0.55,
+    "match_scales": [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3],
     "max_retries": 3,
     "retry_delay_min": 0.5,
     "retry_delay_max": 1.0,
@@ -66,7 +66,7 @@ DEFAULT_CONFIG = {
     "fallback_to_ocr": True,
     "debug_save_images": True,
     "debug_output_dir": "artifacts/network_error",
-    "popup_roi": [0.10, 0.25, 0.90, 0.85],
+    "popup_roi": [0.00, 0.37, 1.00, 0.63],
     "ocr_texts": ["网络不好", "网络异常", "连接失败", "网络连接", "无法连接", "确认", "确定"],
     "cooldown_seconds": 5.0,
     "template_min_var": 5.0,
@@ -439,9 +439,9 @@ class NetworkErrorHandler(TriggerTask):
         bx1, by1, bx2, by2 = popup_bbox
         screen_h, screen_w = screen.shape[:2]
 
-        margin_x = int((bx2 - bx1) * 0.08)
+        margin_x = int((bx2 - bx1) * 0.20)
         margin_top = int((by2 - by1) * 0.55)
-        margin_bottom = int((by2 - by1) * 0.05)
+        margin_bottom = int((by2 - by1) * 0.12)
 
         # Build ROI in normalized form (auto-detected)
         btn_roi = [
