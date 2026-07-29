@@ -13,7 +13,7 @@ import time
 import logging
 import random
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
 import adbutils
 import cv2

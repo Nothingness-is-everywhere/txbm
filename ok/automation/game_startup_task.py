@@ -29,7 +29,7 @@ from ok.task.task import BaseTask
 logger = logging.getLogger("GameStartupTask")
 
 # Default configuration values
-DEFAULT_MIN_DELAY = 3
+DEFAULT_MIN_DELAY = 15  # Changed from 3s to 15s for longer game loading wait
 DEFAULT_MAX_WAIT = 20
 DEFAULT_POLL_INTERVAL = 0.5
 
@@ -293,6 +293,9 @@ class GameStartupTask(BaseTask):
         elif post_close_result == 'failed':
             logger.error("Step C: critical error, cannot proceed")
             return False
+        else:
+            # Fallback for unknown return values
+            logger.warning(f"Step C: unknown result '{post_close_result}', proceeding conservatively")
 
         # Step D: Detect & Close Check-in (conditional)
         logger.info("Step D: Detect & Close Check-in Screen")
