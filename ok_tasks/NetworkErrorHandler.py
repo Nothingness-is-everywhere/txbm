@@ -503,8 +503,8 @@ class NetworkErrorHandler(TriggerTask):
         screen_h, screen_w = screen.shape[:2]
 
         margin_x = int((bx2 - bx1) * 0.20)
-        margin_top = int((by2 - by1) * 0.55)
-        margin_bottom = int((by2 - by1) * 0.12)
+        margin_top = int((by2 - by1) * 0.50)
+        margin_bottom = int((by2 - by1) * 0.01)
 
         # Build ROI in normalized form (auto-detected)
         btn_roi = [
