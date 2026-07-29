@@ -23,12 +23,14 @@ class ModifyListItem(ConfigLabelAndWidget):
 
     def update_value(self):
         items = self.config.get(self.key)
+        if not isinstance(items, list):
+            items = [items]
         if self.options_available is not None:
-            items = [og.app.tr(item) for item in items]
-        total_length = sum(len(item) for item in items)
+            items = [og.app.tr(str(item)) for item in items]
+        total_length = sum(len(str(item)) for item in items)
 
         if total_length > 30:
-            display_text = "\n".join(items)
+            display_text = "\n".join(str(item) for item in items)
         else:
             display_text = value_to_string(items)
 
