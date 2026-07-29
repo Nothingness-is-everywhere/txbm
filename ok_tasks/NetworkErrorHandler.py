@@ -54,7 +54,15 @@ def resolve_repo_path(relative_path: str) -> Path:
 DEFAULT_CONFIG = {
     "_enabled": False,
     "popup_template_path": "templates/network_popup.png",
+    "popup_template_paths": [
+        "templates/network_popup.png",
+        "templates/network_popup_v2.png",
+    ],
     "confirm_button_template_path": "templates/network_confirm_button.png",
+    "confirm_button_template_paths": [
+        "templates/network_confirm_button.png",
+        "templates/network_confirm_button_v2.png",
+    ],
     "popup_threshold": 0.55,
     "button_threshold": 0.55,
     "match_scales": [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3],
@@ -204,6 +212,8 @@ class NetworkErrorHandler(TriggerTask):
         self.default_config = DEFAULT_CONFIG
         self._popup_tpl = None
         self._button_tpl = None
+        self._popup_tpls = []  # list of (template, valid) tuples
+        self._button_tpls = []  # list of (template, valid) tuples
         self._popup_valid = False
         self._button_valid = False
         self._last_debug_path = None
@@ -224,37 +234,79 @@ class NetworkErrorHandler(TriggerTask):
         """
         Load and validate popup and button template images.
 
+        支持多模板：依次尝试 popup_template_paths 列表中的所有模板，
+        任一匹配成功即判定为检测到弹窗。
+
         加载并验证模板图像的有效性。
         """
-        popup_rel = self.config.get("popup_template_path", DEFAULT_CONFIG["popup_template_path"])
-        button_rel = self.config.get(
-            "confirm_button_template_path", DEFAULT_CONFIG["confirm_button_template_path"]
+        # Load popup templates (support multiple)
+        popup_paths = self.config.get(
+            "popup_template_paths", DEFAULT_CONFIG["popup_template_paths"]
         )
+        # Fallback to single path for backward compatibility
+        if not popup_paths:
+            single = self.config.get(
+                "popup_template_path", DEFAULT_CONFIG["popup_template_path"]
+            )
+            popup_paths = [single]
 
-        popup_abs = str(resolve_repo_path(popup_rel))
-        button_abs = str(resolve_repo_path(button_rel))
+        self._popup_tpls = []
+        for rel_path in popup_paths:
+            abs_path = str(resolve_repo_path(rel_path))
+            tpl = self._safe_imread(abs_path)
+            if tpl is not None:
+                valid = validate_template_image(tpl, f"popup[{rel_path}]")
+                self._popup_tpls.append((tpl, valid))
+            else:
+                logger.warning(f"Popup template not found or invalid: {rel_path}")
 
-        self._popup_tpl = self._safe_imread(popup_abs)
-        self._button_tpl = self._safe_imread(button_abs)
+        # Keep backward-compatible single template (first valid one)
+        self._popup_tpl = None
+        self._popup_valid = False
+        for tpl, valid in self._popup_tpls:
+            if valid:
+                self._popup_tpl = tpl
+                self._popup_valid = True
+                break
 
-        self._popup_valid = self._popup_tpl is not None and validate_template_image(
-            self._popup_tpl, "popup"
+        # Load button templates (support multiple)
+        button_paths = self.config.get(
+            "confirm_button_template_paths", DEFAULT_CONFIG["confirm_button_template_paths"]
         )
-        self._button_valid = self._button_tpl is not None and validate_template_image(
-            self._button_tpl, "confirm_button"
-        )
+        if not button_paths:
+            single = self.config.get(
+                "confirm_button_template_path", DEFAULT_CONFIG["confirm_button_template_path"]
+            )
+            button_paths = [single]
+
+        self._button_tpls = []
+        for rel_path in button_paths:
+            abs_path = str(resolve_repo_path(rel_path))
+            tpl = self._safe_imread(abs_path)
+            if tpl is not None:
+                valid = validate_template_image(tpl, f"button[{rel_path}]")
+                self._button_tpls.append((tpl, valid))
+            else:
+                logger.warning(f"Button template not found or invalid: {rel_path}")
+
+        # Keep backward-compatible single template (first valid one)
+        self._button_tpl = None
+        self._button_valid = False
+        for tpl, valid in self._button_tpls:
+            if valid:
+                self._button_tpl = tpl
+                self._button_valid = True
+                break
 
         if not self._popup_valid:
             logger.error(
-                "Popup template invalid or missing. "
-                "Place a real template at '%s' or enable OCR fallback.",
-                popup_rel,
+                "No valid popup template loaded. "
+                "Place real templates in templates/ or enable OCR fallback."
             )
         if not self._button_valid:
             logger.error(
-                "Confirm button template invalid or missing. "
-                "Place a real template at '%s' or enable OCR fallback.",
-                button_rel,
+                "No valid confirm button template loaded. "
+                "Place real templates in templates/ or enable OCR fallback."
             )
 
     @staticmethod
@@ -417,14 +469,25 @@ class NetworkErrorHandler(TriggerTask):
     def _match_popup(
         self, screen: np.ndarray
     ) -> Optional[Tuple[int, int, float, Tuple[int, int, int, int]]]:
-        """Detect the full network error popup on screen."""
+        """Detect the full network error popup on screen using all loaded templates."""
         roi = self.config.get("popup_roi", DEFAULT_CONFIG["popup_roi"])
         threshold = self.config.get("popup_threshold", DEFAULT_CONFIG["popup_threshold"])
         scales = self.config.get("match_scales", DEFAULT_CONFIG["match_scales"])
 
-        return self._multi_scale_match(
-            screen, self._popup_tpl, roi, threshold, scales, "network_popup"
-        )
+        # Try all loaded popup templates, return the best match
+        best_result = None
+        best_conf = 0.0
+        for tpl, valid in self._popup_tpls:
+            if not valid or tpl is None:
+                continue
+            result = self._multi_scale_match(
+                screen, tpl, roi, threshold, scales, "network_popup"
+            )
+            if result is not None and result[2] > best_conf:
+                best_conf = result[2]
+                best_result = result
+
+        return best_result
 
     def _match_confirm_button(
         self,
@@ -434,7 +497,7 @@ class NetworkErrorHandler(TriggerTask):
         """
         Find the "确定" button within the popup bounding box.
 
-        在弹窗 bbox 内查找"确定"按钮。
+        在弹窗 bbox 内查找"确定"按钮（尝试所有已加载的按钮模板）。
         """
         bx1, by1, bx2, by2 = popup_bbox
         screen_h, screen_w = screen.shape[:2]
@@ -454,9 +517,20 @@ class NetworkErrorHandler(TriggerTask):
         threshold = self.config.get("button_threshold", DEFAULT_CONFIG["button_threshold"])
         scales = self.config.get("match_scales", DEFAULT_CONFIG["match_scales"])
 
-        return self._multi_scale_match(
-            screen, self._button_tpl, btn_roi, threshold, scales, "confirm_button"
-        )
+        # Try all loaded button templates, return the best match
+        best_result = None
+        best_conf = 0.0
+        for tpl, valid in self._button_tpls:
+            if not valid or tpl is None:
+                continue
+            result = self._multi_scale_match(
+                screen, tpl, btn_roi, threshold, scales, "confirm_button"
+            )
+            if result is not None and result[2] > best_conf:
+                best_conf = result[2]
+                best_result = result
+
+        return best_result
 
     # ------------------------------------------------------------------
     # Detection interface (public, testable)
@@ -468,7 +542,7 @@ class NetworkErrorHandler(TriggerTask):
         """
         Detect network popup using template matching.
 
-        使用模板匹配检测网络错误弹窗。
+        使用模板匹配检测网络错误弹窗（遍历所有已加载模板）。
 
         Args:
             frame: Screenshot in BGR format.
@@ -478,8 +552,8 @@ class NetworkErrorHandler(TriggerTask):
             found=True  => result is (center_x, center_y, confidence, bbox).
             found=False => result is None.
         """
-        if not self._popup_valid or self._popup_tpl is None:
-            logger.warning("Popup template not loaded or invalid, skipping detection")
+        if not self._popup_valid:
+            logger.warning("No valid popup template loaded, skipping detection")
             return False, None
 
         result = self._match_popup(frame)
