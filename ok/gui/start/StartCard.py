@@ -28,9 +28,8 @@ class StartCard(SettingCard):
         self.hBoxLayout.addWidget(self.status_bar, 0, Qt.AlignLeft)
         self.hBoxLayout.addSpacing(6)
 
-        self.stamina_label = BodyLabel(self.tr("体力: --"))
+        self.stamina_label = BodyLabel(self.tr("Expedition") + ": --/--  " + self.tr("Training") + ": --/--")
         self.stamina_label.setStyleSheet("color: #2ecc71; font-size: 12px;")
-        self.stamina_label.hide()
         self.hBoxLayout.addWidget(self.stamina_label, 0, Qt.AlignLeft)
         self.hBoxLayout.addSpacing(6)
 
@@ -168,24 +167,33 @@ class StartCard(SettingCard):
     def _on_stamina_updated(self, values: dict):
         exp = values.get("expedition")
         train = values.get("training")
-        if exp and train:
-            text = self.tr("Expedition") + f": {exp.current}/{exp.max_val}  " + self.tr("Training") + f": {train.current}/{train.max_val}"
-            self.stamina_label.setText(text)
-            self.stamina_label.show()
+        parts = []
+        if exp:
+            parts.append(self.tr("Expedition") + f": {exp.current}/{exp.max_val}")
+        else:
+            parts.append(self.tr("Expedition") + ": --/--")
+        if train:
+            parts.append(self.tr("Training") + f": {train.current}/{train.max_val}")
+        else:
+            parts.append(self.tr("Training") + ": --/--")
+        self.stamina_label.setText("  ".join(parts))
+        self.stamina_label.show()
 
     def _poll_stamina(self):
         try:
             from ok.automation.stamina_reader import get_stamina
             exp = get_stamina("expedition", force_refresh=False)
             train = get_stamina("training", force_refresh=False)
-            if exp or train:
-                parts = []
-                if exp:
-                    parts.append(self.tr("Expedition") + f": {exp.current}/{exp.max_val}")
-                if train:
-                    parts.append(self.tr("Training") + f": {train.current}/{train.max_val}")
-                if parts:
-                    self.stamina_label.setText("  ".join(parts))
-                    self.stamina_label.show()
-        except Exception:
-            pass
+            parts = []
+            if exp:
+                parts.append(self.tr("Expedition") + f": {exp.current}/{exp.max_val}")
+            else:
+                parts.append(self.tr("Expedition") + ": --/--")
+            if train:
+                parts.append(self.tr("Training") + f": {train.current}/{train.max_val}")
+            else:
+                parts.append(self.tr("Training") + ": --/--")
+            self.stamina_label.setText("  ".join(parts))
+            self.stamina_label.show()
+        except Exception as e:
+            logger.debug(f"Stamina poll failed: {e}")

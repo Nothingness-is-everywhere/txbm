@@ -39,8 +39,8 @@ class Screenshot(QObject):
         communicate.screenshot.connect(self.screenshot)
         self.click_screenshot_folder = get_relative_path(
             og.ok.config.get("click_screenshots_folder")) if og.ok.config.get(
-            "click_screenshots_folder") else None
-        self.screenshot_folder = get_relative_path(og.ok.config.get("screenshots_folder"))
+            "click_screenshots_folder") else get_relative_path("screenshots", "clicks")
+        self.screenshot_folder = get_relative_path(og.ok.config.get("screenshots_folder")) or get_relative_path("screenshots")
         logger.debug(f"init Screenshot {self.screenshot_folder} {self.click_screenshot_folder}")
         if self.click_screenshot_folder is not None or self.screenshot_folder is not None:
             self.task_queue = queue.Queue()
