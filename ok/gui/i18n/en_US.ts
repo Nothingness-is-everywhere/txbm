@@ -195,6 +195,70 @@
             <source>No Capture Available or Selected</source>
             <translation>No Capture Available or Selected</translation>
         </message>
+        <message>
+            <source>Screenshot Region Test</source>
+            <translation>Screenshot Region Test</translation>
+        </message>
+        <message>
+            <source>Capture &amp; Load</source>
+            <translation>Capture &amp; Load</translation>
+        </message>
+        <message>
+            <source>Load Image</source>
+            <translation>Load Image</translation>
+        </message>
+        <message>
+            <source>Clear Selection</source>
+            <translation>Clear Selection</translation>
+        </message>
+        <message>
+            <source>Mouse: --</source>
+            <translation>Mouse: --</translation>
+        </message>
+        <message>
+            <source>Selection Info:</source>
+            <translation>Selection Info:</translation>
+        </message>
+        <message>
+            <source>Select a region on the image to see coordinates...</source>
+            <translation>Select a region on the image to see coordinates...</translation>
+        </message>
+        <message>
+            <source>Copy</source>
+            <translation>Copy</translation>
+        </message>
+        <message>
+            <source>No selection to copy</source>
+            <translation>No selection to copy</translation>
+        </message>
+        <message>
+            <source>Copied to clipboard</source>
+            <translation>Copied to clipboard</translation>
+        </message>
+        <message>
+            <source>Capture loaded successfully</source>
+            <translation>Capture loaded successfully</translation>
+        </message>
+        <message>
+            <source>Image loaded</source>
+            <translation>Image loaded</translation>
+        </message>
+        <message>
+            <source>Failed to load image</source>
+            <translation>Failed to load image</translation>
+        </message>
+        <message>
+            <source>Open Image</source>
+            <translation>Open Image</translation>
+        </message>
+        <message>
+            <source>No image loaded</source>
+            <translation>No image loaded</translation>
+        </message>
+        <message>
+            <source>Selection Info</source>
+            <translation>Selection Info</translation>
+        </message>
     </context>
     <context>
         <name>GlobalConfigCard</name>
@@ -694,6 +758,18 @@
         <message>
             <source>Waiting for task to be enabled</source>
             <translation>Waiting for task to be enabled</translation>
+        </message>
+        <message>
+            <source>Expedition</source>
+            <translation>Expedition</translation>
+        </message>
+        <message>
+            <source>Training</source>
+            <translation>Training</translation>
+        </message>
+        <message>
+            <source>Stamina</source>
+            <translation>Stamina</translation>
         </message>
     </context>
     <context>
@@ -2704,6 +2780,13 @@
         <message>
             <source>Select File or Folder</source>
             <translation>Select File or Folder</translation>
+        </message>
+    </context>
+    <context>
+        <name>RegionSelectImageWidget</name>
+        <message>
+            <source>No image loaded</source>
+            <translation>No image loaded</translation>
         </message>
     </context>
 </TS>

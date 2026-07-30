@@ -3,9 +3,10 @@ import time
 from ctypes import windll, wintypes
 
 from PySide6.QtCore import Qt, Signal, QCoreApplication
-from PySide6.QtWidgets import QWidget, QFileDialog, QCompleter, QVBoxLayout, QHBoxLayout
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QWidget, QFileDialog, QCompleter, QVBoxLayout, QHBoxLayout, QSizePolicy
 from _ctypes import byref
-from qfluentwidgets import PushButton, FlowLayout, ComboBox, SearchLineEdit, TextEdit
+from qfluentwidgets import PushButton, FlowLayout, ComboBox, SearchLineEdit, TextEdit, BodyLabel, StrongBodyLabel
 
 from ok import Config, og
 from ok import Handler
@@ -13,6 +14,7 @@ from ok import Logger
 from ok.capture.windows.dump import dump_threads
 from ok.device.capture import ImageCaptureMethod
 from ok.device.interaction import DoNothingInteraction
+from ok.gui.debug.RegionSelectImageWidget import RegionSelectImageWidget
 from ok.gui.i18n.GettextTranslator import convert_to_mo_files
 from ok.gui.util.Alert import alert_info, alert_error
 from ok.gui.widget.Tab import Tab
@@ -103,7 +105,142 @@ class DebugTab(Tab):
         self.handler.post(self.bind_hot_keys)
         self.handler.post(self.check_hotkey, 0.1)
 
+        self._init_region_test_panel()
+
         og.app.app.aboutToQuit.connect(self.unregister)
+
+    def _init_region_test_panel(self):
+        """Initialize the screenshot region test panel."""
+        panel_widget = QWidget()
+        panel_layout = QVBoxLayout(panel_widget)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(8)
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+
+        capture_btn = PushButton(self.tr("Capture & Load"))
+        capture_btn.clicked.connect(self._region_capture_and_load)
+        toolbar.addWidget(capture_btn)
+
+        load_btn = PushButton(self.tr("Load Image"))
+        load_btn.clicked.connect(self._region_load_image)
+        toolbar.addWidget(load_btn)
+
+        clear_btn = PushButton(self.tr("Clear Selection"))
+        clear_btn.clicked.connect(self._region_clear_selection)
+        toolbar.addWidget(clear_btn)
+
+        toolbar.addStretch()
+
+        self.mouse_pos_label = BodyLabel(self.tr("Mouse: --"))
+        self.mouse_pos_label.setStyleSheet("color: gray;")
+        toolbar.addWidget(self.mouse_pos_label)
+
+        panel_layout.addLayout(toolbar)
+
+        self.region_widget = RegionSelectImageWidget()
+        self.region_widget.setMinimumHeight(300)
+        self.region_widget.region_selected.connect(self._on_region_selected)
+        self.region_widget.mouse_moved.connect(self._on_mouse_moved)
+        panel_layout.addWidget(self.region_widget, stretch=1)
+
+        result_layout = QHBoxLayout()
+        result_layout.setSpacing(8)
+
+        result_label = StrongBodyLabel(self.tr("Selection Info:"))
+        result_layout.addWidget(result_label)
+
+        self.result_edit = TextEdit()
+        self.result_edit.setFixedHeight(100)
+        self.result_edit.setPlaceholderText(self.tr("Select a region on the image to see coordinates..."))
+        result_layout.addWidget(self.result_edit, stretch=1)
+
+        copy_btn = PushButton(self.tr("Copy"))
+        copy_btn.clicked.connect(self._copy_selection_info)
+        result_layout.addWidget(copy_btn)
+
+        panel_layout.addLayout(result_layout)
+
+        self.add_card(self.tr("Screenshot Region Test"), panel_widget, stretch=1)
+
+        self._last_selection_info = None
+
+    def _region_capture_and_load(self):
+        """Capture a screenshot and load it into the region widget."""
+        self.handler.post(self._do_capture_and_load)
+
+    def _do_capture_and_load(self):
+        """Execute capture and load in handler thread."""
+        try:
+            if og.device_manager.capture_method is None:
+                self.handler.post(lambda: alert_error(self.tr("No Capture Available or Selected")))
+                return
+            frame = og.device_manager.capture_method.get_frame()
+            if frame is not None:
+                self.region_widget.set_image_from_array(frame)
+                self.handler.post(lambda: alert_info(self.tr("Capture loaded successfully")))
+            else:
+                self.handler.post(lambda: alert_error(self.tr("Capture returned None")))
+        except Exception as e:
+            logger.error(f"Capture and load error: {e}")
+            self.handler.post(lambda: alert_error(str(e)))
+
+    def _region_load_image(self):
+        """Load an image file into the region widget."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, self.tr("Open Image"), "",
+            "Image Files (*.png *.jpg *.bmp *.jpeg)"
+        )
+        if file_path:
+            if self.region_widget.set_image(file_path):
+                alert_info(self.tr("Image loaded"))
+            else:
+                alert_error(self.tr("Failed to load image"))
+
+    def _region_clear_selection(self):
+        """Clear the current selection."""
+        self.region_widget.clear_selection()
+        self.result_edit.clear()
+        self._last_selection_info = None
+
+    def _on_region_selected(self, info: dict):
+        """Handle region selection and display coordinate info."""
+        self._last_selection_info = info
+        img_w, img_h = self.region_widget.get_image_dimensions()
+
+        lines = [
+            f"--- {self.tr('Selection Info')} ---",
+            f"x={info['x']}, y={info['y']}, w={info['w']}, h={info['h']}",
+            f"x1={info['x1']}, y1={info['y1']}, x2={info['x2']}, y2={info['y2']}",
+            f"ratio: rx={info['rx']:.4f}, ry={info['ry']:.4f}, rw={info['rw']:.4f}, rh={info['rh']:.4f}",
+            f"center: ({info['center_x']}, {info['center_y']}) = ({info['center_rx']:.4f}, {info['center_ry']:.4f})",
+            f"image size: {img_w}x{img_h}",
+        ]
+        self.result_edit.setPlainText("\n".join(lines))
+
+    def _on_mouse_moved(self, px: int, py: int, rx: float, ry: float):
+        """Update mouse position label."""
+        self.mouse_pos_label.setText(
+            f"Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})"
+        )
+
+    def _copy_selection_info(self):
+        """Copy selection info to clipboard."""
+        if self._last_selection_info is None:
+            alert_info(self.tr("No selection to copy"))
+            return
+
+        info = self._last_selection_info
+        text = (
+            f"x={info['x']}, y={info['y']}, w={info['w']}, h={info['h']}\n"
+            f"x1={info['x1']}, y1={info['y1']}, x2={info['x2']}, y2={info['y2']}\n"
+            f"rx={info['rx']:.4f}, ry={info['ry']:.4f}, rw={info['rw']:.4f}, rh={info['rh']:.4f}\n"
+            f"center: ({info['center_x']}, {info['center_y']}) ratio: ({info['center_rx']:.4f}, {info['center_ry']:.4f})"
+        )
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(text)
+        alert_info(self.tr("Copied to clipboard"))
 
     def gen_tr(self):
         folder = og.app.gen_tr_po_files()

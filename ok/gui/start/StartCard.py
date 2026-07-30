@@ -1,8 +1,8 @@
 from ctypes import windll, wintypes
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from _ctypes import byref
-from qfluentwidgets import FluentIcon, PrimaryPushButton, SettingCard, PushButton
+from qfluentwidgets import FluentIcon, PrimaryPushButton, SettingCard, PushButton, BodyLabel
 
 from ok import Handler
 from ok import Logger
@@ -28,6 +28,12 @@ class StartCard(SettingCard):
         self.hBoxLayout.addWidget(self.status_bar, 0, Qt.AlignLeft)
         self.hBoxLayout.addSpacing(6)
 
+        self.stamina_label = BodyLabel(self.tr("体力: --"))
+        self.stamina_label.setStyleSheet("color: #2ecc71; font-size: 12px;")
+        self.stamina_label.hide()
+        self.hBoxLayout.addWidget(self.stamina_label, 0, Qt.AlignLeft)
+        self.hBoxLayout.addSpacing(6)
+
         self.capture_button = PushButton(FluentIcon.ZOOM, self.tr("Capture"), self)
         self.hBoxLayout.addWidget(self.capture_button, 0, Qt.AlignRight)
         self.hBoxLayout.addSpacing(6)
@@ -47,6 +53,11 @@ class StartCard(SettingCard):
         communicate.window.connect(self.update_status)
         communicate.task.connect(self.update_task)
         communicate.starting_emulator.connect(self.on_starting_emulator)
+        communicate.stamina_updated.connect(self._on_stamina_updated)
+
+        self._stamina_timer = QTimer(self)
+        self._stamina_timer.timeout.connect(self._poll_stamina)
+        self._stamina_timer.start(5000)
 
         self.handler = Handler(exit_event, "StartCard")
         self.current_hotkey = "UNINIT"
@@ -153,3 +164,28 @@ class StartCard(SettingCard):
                 logger.error(f"Failed to register hotkey {hotkey}")
         else:
             logger.debug(f"Hotkey disabled or invalid: {hotkey}")
+
+    def _on_stamina_updated(self, values: dict):
+        exp = values.get("expedition")
+        train = values.get("training")
+        if exp and train:
+            text = self.tr("Expedition") + f": {exp.current}/{exp.max_val}  " + self.tr("Training") + f": {train.current}/{train.max_val}"
+            self.stamina_label.setText(text)
+            self.stamina_label.show()
+
+    def _poll_stamina(self):
+        try:
+            from ok.automation.stamina_reader import get_stamina
+            exp = get_stamina("expedition", force_refresh=False)
+            train = get_stamina("training", force_refresh=False)
+            if exp or train:
+                parts = []
+                if exp:
+                    parts.append(self.tr("Expedition") + f": {exp.current}/{exp.max_val}")
+                if train:
+                    parts.append(self.tr("Training") + f": {train.current}/{train.max_val}")
+                if parts:
+                    self.stamina_label.setText("  ".join(parts))
+                    self.stamina_label.show()
+        except Exception:
+            pass

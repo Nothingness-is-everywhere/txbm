@@ -529,6 +529,15 @@ def update_global_stamina(force_refresh: bool = False) -> Dict[str, Optional[Sta
         TRAINING_STAMINA_VALUE.max_val = train.max_val
         TRAINING_STAMINA = train.current
 
+    try:
+        from ok.gui.Communicate import communicate
+        communicate.stamina_updated.emit({
+            "expedition": EXPEDITION_STAMINA_VALUE,
+            "training": TRAINING_STAMINA_VALUE,
+        })
+    except Exception:
+        pass
+
     return values
 
 

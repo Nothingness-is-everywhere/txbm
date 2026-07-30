@@ -195,6 +195,77 @@
             <source>No Capture Available or Selected</source>
             <translation>截图方式不可用或未选择</translation>
         </message>
+        <message>
+            <source>Screenshot Region Test</source>
+            <translation>截图区域测试</translation>
+        </message>
+        <message>
+            <source>Capture &amp; Load</source>
+            <translation>截图并加载</translation>
+        </message>
+        <message>
+            <source>Load Image</source>
+            <translation>加载图片</translation>
+        </message>
+        <message>
+            <source>Clear Selection</source>
+            <translation>清除选区</translation>
+        </message>
+        <message>
+            <source>Mouse: --</source>
+            <translation>鼠标: --</translation>
+        </message>
+        <message>
+            <source>Selection Info:</source>
+            <translation>选区信息:</translation>
+        </message>
+        <message>
+            <source>Select a region on the image to see coordinates...</source>
+            <translation>在图片上选择一个区域以查看坐标...</translation>
+        </message>
+        <message>
+            <source>Copy</source>
+            <translation>复制</translation>
+        </message>
+        <message>
+            <source>No selection to copy</source>
+            <translation>没有可复制的选区</translation>
+        </message>
+        <message>
+            <source>Copied to clipboard</source>
+            <translation>已复制到剪贴板</translation>
+        </message>
+        <message>
+            <source>Capture loaded successfully</source>
+            <translation>截图加载成功</translation>
+        </message>
+        <message>
+            <source>Image loaded</source>
+            <translation>图片加载成功</translation>
+        </message>
+        <message>
+            <source>Failed to load image</source>
+            <translation>图片加载失败</translation>
+        </message>
+        <message>
+            <source>Open Image</source>
+            <translation>打开图片</translation>
+        </message>
+        <message>
+            <source>No image loaded</source>
+            <translation>未加载图片</translation>
+        </message>
+        <message>
+            <source>Selection Info</source>
+            <translation>选区信息</translation>
+        </message>
+    </context>
+    <context>
+        <name>RegionSelectImageWidget</name>
+        <message>
+            <source>No image loaded</source>
+            <translation>未加载图片</translation>
+        </message>
     </context>
     <context>
         <name>GlobalConfigCard</name>
@@ -694,6 +765,18 @@
         <message>
             <source>Waiting for task to be enabled</source>
             <translation>点击选择任务开始</translation>
+        </message>
+        <message>
+            <source>Expedition</source>
+            <translation>远征</translation>
+        </message>
+        <message>
+            <source>Training</source>
+            <translation>训练</translation>
+        </message>
+        <message>
+            <source>Stamina</source>
+            <translation>体力</translation>
         </message>
     </context>
     <context>
