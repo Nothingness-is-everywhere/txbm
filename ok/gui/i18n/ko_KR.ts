@@ -186,7 +186,7 @@
         </message>
         <message>
             <source>Drop or Select Screenshot</source>
-            <translation>스크린샷 선택 또는 드롭</translation>
+            <translation>드래그하거나 스크린샷 선택</translation>
         </message>
         <message>
             <source>Capture Success</source>
@@ -258,7 +258,7 @@
         </message>
         <message>
             <source>Open Image</source>
-            <translation>Open Image</translation>
+            <translation>이미지 열기</translation>
         </message>
         <message>
             <source>No image loaded</source>
@@ -303,6 +303,10 @@
         <message>
             <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
             <translation>마우스: ({px}, {py}) 비율: ({rx:.3f}, {ry:.3f})</translation>
+        </message>
+        <message>
+            <source>Image Files (*.png *.jpg *.bmp)</source>
+            <translation>이미지 파일 (*.png *.jpg *.bmp)</translation>
         </message>
     </context>
     <context>

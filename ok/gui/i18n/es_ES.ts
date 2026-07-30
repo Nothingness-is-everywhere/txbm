@@ -130,7 +130,7 @@
         <name>DebugTab</name>
         <message>
             <source>Dump Threads(HotKey:Ctrl+Alt+D)</source>
-            <translation>Volcar hilos (Atajo: Ctrl+Alt+D)</translation>
+            <translation>Volcar subprocesos (Hotkey: Ctrl+Alt+D)</translation>
         </message>
         <message>
             <source>Capture Screenshot</source>
@@ -186,7 +186,7 @@
         </message>
         <message>
             <source>Drop or Select Screenshot</source>
-            <translation>Arrastra o selecciona una captura de pantalla</translation>
+            <translation>Soltar o seleccionar captura de pantalla</translation>
         </message>
         <message>
             <source>Capture Success</source>
@@ -258,7 +258,7 @@
         </message>
         <message>
             <source>Open Image</source>
-            <translation>Open Image</translation>
+            <translation>Abrir imagen</translation>
         </message>
         <message>
             <source>No image loaded</source>
@@ -303,6 +303,10 @@
         <message>
             <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
             <translation>Ratón: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</translation>
+        </message>
+        <message>
+            <source>Image Files (*.png *.jpg *.bmp)</source>
+            <translation>Archivos de imagen (*.png *.jpg *.bmp)</translation>
         </message>
     </context>
     <context>

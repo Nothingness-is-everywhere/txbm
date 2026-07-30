@@ -295,6 +295,10 @@
             <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
             <translation>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</translation>
         </message>
+        <message>
+            <source>Image Files (*.png *.jpg *.bmp)</source>
+            <translation>Image Files (*.png *.jpg *.bmp)</translation>
+        </message>
     </context>
     <context>
         <name>GlobalConfigCard</name>

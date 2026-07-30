@@ -819,7 +819,13 @@ class OCR(FindFeature):
             return sort_boxes(detected_boxes)
 
     def ocr_fun(self, lib):
-        lib_name = self.executor.config.get('ocr').get(lib).get('lib')
+        ocr_config = self.executor.config.get('ocr')
+        if not ocr_config or not isinstance(ocr_config, dict):
+            return self.rapid_ocr
+        lib_config = ocr_config.get(lib)
+        if not lib_config or not isinstance(lib_config, dict):
+            return self.rapid_ocr
+        lib_name = lib_config.get('lib', 'rapidocr')
         if lib_name == 'paddleocr':
             return self.paddle_ocr
         elif lib_name == 'dgocr':

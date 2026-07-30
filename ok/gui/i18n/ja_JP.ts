@@ -130,7 +130,7 @@
         <name>DebugTab</name>
         <message>
             <source>Dump Threads(HotKey:Ctrl+Alt+D)</source>
-            <translation>スレッドをダンプ(ホットキー:Ctrl+Alt+D)</translation>
+            <translation>スレッドダンプ(ホットキー:Ctrl+Alt+D)</translation>
         </message>
         <message>
             <source>Capture Screenshot</source>
@@ -186,7 +186,7 @@
         </message>
         <message>
             <source>Drop or Select Screenshot</source>
-            <translation>スクリーンショットをドロップまたは選択</translation>
+            <translation>ドラッグまたはスクリーンショットを選択</translation>
         </message>
         <message>
             <source>Capture Success</source>
@@ -258,7 +258,7 @@
         </message>
         <message>
             <source>Open Image</source>
-            <translation>Open Image</translation>
+            <translation>画像を開く</translation>
         </message>
         <message>
             <source>No image loaded</source>
@@ -303,6 +303,10 @@
         <message>
             <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
             <translation>マウス: ({px}, {py}) 比率: ({rx:.3f}, {ry:.3f})</translation>
+        </message>
+        <message>
+            <source>Image Files (*.png *.jpg *.bmp)</source>
+            <translation>画像ファイル (*.png *.jpg *.bmp)</translation>
         </message>
     </context>
     <context>

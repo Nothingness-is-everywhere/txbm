@@ -305,6 +305,10 @@ x1={x1}, y1={y1}, x2={x2}, y2={y2}
 rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}
 中心: ({cx}, {cy}) 比例: ({crx:.4f}, {cry:.4f})</translation>
         </message>
+        <message>
+            <source>Image Files (*.png *.jpg *.bmp)</source>
+            <translation>图片文件 (*.png *.jpg *.bmp)</translation>
+        </message>
     </context>
     <context>
         <name>RegionSelectImageWidget</name>

@@ -348,7 +348,7 @@ class DebugTab(Tab):
         self.target_function_edit.setCompleter(completer)
 
     def select_screenshot(self):
-        file_names, _ = QFileDialog.getOpenFileNames(None, "Open Image", "", "Image Files (*.png *.jpg *.bmp)")
+        file_names, _ = QFileDialog.getOpenFileNames(self, self.tr("Open Image"), "", self.tr("Image Files (*.png *.jpg *.bmp)"))
 
         if file_names:
             logger.info(f"Selected files: {file_names}")

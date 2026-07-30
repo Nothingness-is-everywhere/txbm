@@ -130,7 +130,7 @@
         <name>DebugTab</name>
         <message>
             <source>Dump Threads(HotKey:Ctrl+Alt+D)</source>
-            <translation>Dump Threads (快捷鍵：Ctrl+Alt+D)</translation>
+            <translation>轉儲執行緒(快捷鍵:Ctrl+Alt+D)</translation>
         </message>
         <message>
             <source>Capture Screenshot</source>
@@ -174,7 +174,7 @@
         </message>
         <message>
             <source>call success: {result}</source>
-            <translation>呼叫成功 success: {result}</translation>
+            <translation>呼叫成功: {result}</translation>
         </message>
         <message>
             <source>No OCR configured</source>
@@ -186,7 +186,7 @@
         </message>
         <message>
             <source>Drop or Select Screenshot</source>
-            <translation>拖曳或選取截圖</translation>
+            <translation>拖放或選擇截圖</translation>
         </message>
         <message>
             <source>Capture Success</source>
@@ -258,7 +258,7 @@
         </message>
         <message>
             <source>Open Image</source>
-            <translation>Open Image</translation>
+            <translation>開啟圖片</translation>
         </message>
         <message>
             <source>No image loaded</source>
@@ -303,6 +303,10 @@
         <message>
             <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
             <translation>滑鼠: ({px}, {py}) 比例: ({rx:.3f}, {ry:.3f})</translation>
+        </message>
+        <message>
+            <source>Image Files (*.png *.jpg *.bmp)</source>
+            <translation>圖片文件 (*.png *.jpg *.bmp)</translation>
         </message>
     </context>
     <context>
