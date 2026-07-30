@@ -52,7 +52,7 @@ def resolve_repo_path(relative_path: str) -> Path:
 # Default configuration (merged into task config at runtime)
 # ---------------------------------------------------------------------------
 DEFAULT_CONFIG = {
-    "_enabled": False,
+    "_enabled": True,
     "popup_template_path": "templates/network_popup.png",
     "popup_template_paths": [
         "templates/network_popup.png",
@@ -209,7 +209,7 @@ class NetworkErrorHandler(TriggerTask):
         self.description = "检测并关闭网络不稳定弹窗（模板匹配优先，OCR回退）"
         self.trigger_interval = 2
         self.visible = True
-        self.default_config = DEFAULT_CONFIG
+        self.default_config = dict(DEFAULT_CONFIG)
         self._popup_tpl = None
         self._button_tpl = None
         self._popup_tpls = []  # list of (template, valid) tuples

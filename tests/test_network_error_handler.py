@@ -219,6 +219,8 @@ class TestCooldownAndFallback(unittest.TestCase):
         self.handler._last_handle_time = 0.0
         self.handler._last_handle_fingerprint = ""
         self.handler.config = dict(DEFAULT_CONFIG)
+        self.handler._popup_tpls = []
+        self.handler._button_tpls = []
 
     def test_cooldown_prevents_repeat_click(self):
         """Same fingerprint within cooldown should be rejected."""
@@ -318,6 +320,10 @@ class TestDetectionOnFixture(unittest.TestCase):
 
         self.handler._popup_valid = validate_template_image(self.handler._popup_tpl, "test_popup")
         self.handler._button_valid = validate_template_image(self.handler._button_tpl, "test_button")
+
+        # Initialize multi-template lists (normally done in __init__)
+        self.handler._popup_tpls = [(self.handler._popup_tpl, self.handler._popup_valid)]
+        self.handler._button_tpls = [(self.handler._button_tpl, self.handler._button_valid)]
 
     def test_detect_popup_on_fixture(self):
         """Popup template should match the fixture popup region."""
@@ -420,6 +426,8 @@ class TestTemplateMissingFallback(unittest.TestCase):
     def setUp(self):
         self.handler = NetworkErrorHandler.__new__(NetworkErrorHandler)
         self.handler.config = dict(DEFAULT_CONFIG)
+        self.handler._popup_tpls = []
+        self.handler._button_tpls = []
 
     def test_popup_template_none_returns_not_found(self):
         """Popup detection should return False when template is None."""
