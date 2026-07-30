@@ -268,6 +268,42 @@
             <source>Selection Info</source>
             <translation>Selection Info</translation>
         </message>
+        <message>
+            <source>OCR</source>
+            <translation>OCR 인식</translation>
+        </message>
+        <message>
+            <source>OCR success (Logged): {result}</source>
+            <translation>OCR 인식 결과(로그 기록): {result}</translation>
+        </message>
+        <message>
+            <source>--- {title} ---</source>
+            <translation>--- {title} ---</translation>
+        </message>
+        <message>
+            <source>x={x}, y={y}, w={w}, h={h}</source>
+            <translation>x={x}, y={y}, w={w}, h={h}</translation>
+        </message>
+        <message>
+            <source>x1={x1}, y1={y1}, x2={x2}, y2={y2}</source>
+            <translation>x1={x1}, y1={y1}, x2={x2}, y2={y2}</translation>
+        </message>
+        <message>
+            <source>ratio: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}</source>
+            <translation>비율: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}</translation>
+        </message>
+        <message>
+            <source>center: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})</source>
+            <translation>중심: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})</translation>
+        </message>
+        <message>
+            <source>image size: {w}x{h}</source>
+            <translation>이미지 크기: {w}x{h}</translation>
+        </message>
+        <message>
+            <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
+            <translation>마우스: ({px}, {py}) 비율: ({rx:.3f}, {ry:.3f})</translation>
+        </message>
     </context>
     <context>
         <name>GlobalConfigCard</name>
@@ -770,6 +806,10 @@
             <source>Stamina</source>
             <translation>Stamina</translation>
         </message>
+        <message>
+            <source>Starting...</source>
+            <translation>시작 중...</translation>
+        </message>
     </context>
     <context>
         <name>StartController</name>
@@ -978,6 +1018,10 @@
         <message>
             <source>View Log</source>
             <translation>로그 보기</translation>
+        </message>
+        <message>
+            <source>OCR success (Logged): {result}</source>
+            <translation>OCR 인식 결과(로그 기록): {result}</translation>
         </message>
     </context>
     <context>
@@ -2786,6 +2830,32 @@
         <message>
             <source>No image loaded</source>
             <translation>No image loaded</translation>
+        </message>
+    </context>
+    <context>
+        <name>RunCodeTab</name>
+        <message>
+            <source>Enter Python code here...</source>
+            <translation>여기에 Python 코드를 입력하세요...</translation>
+        </message>
+        <message>
+            <source>Run Code</source>
+            <translation>코드 실행</translation>
+        </message>
+        <message>
+            <source>Output will be shown here...</source>
+            <translation>출력 결과가 여기에 표시됩니다...</translation>
+        </message>
+        <message>
+            <source>Run Python Code</source>
+            <translation>Python 코드 실행</translation>
+        </message>
+    </context>
+    <context>
+        <name>OverlayWidget</name>
+        <message>
+            <source>{x}, {y}, {xr:.3f}, {yr:.3f} (alt+right to copy)</source>
+            <translation>{x}, {y}, {xr:.3f}, {yr:.3f} (Alt+우클릭으로 복사)</translation>
         </message>
     </context>
 </TS>

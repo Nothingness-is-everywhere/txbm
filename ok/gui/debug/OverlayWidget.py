@@ -315,7 +315,8 @@ class OverlayWidget(QWidget):
             x = int(self._mouse_position.x())
             y = int(self._mouse_position.y())
             
-        text = f"{x}, {y}, {x_percent:.3f}, {y_percent:.3f} (alt+right to copy)"
+        text = self.tr("{x}, {y}, {xr:.3f}, {yr:.3f} (alt+right to copy)").format(
+            x=x, y=y, xr=x_percent, yr=y_percent)
         painter.setFont(self.mouse_font)
         
         fm = painter.fontMetrics()

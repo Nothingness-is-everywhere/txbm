@@ -50,7 +50,7 @@ class DebugTab(Tab):
         capture_button.clicked.connect(lambda: self.handler.post(capture))
         layout.addWidget(capture_button)
 
-        ocr_button = PushButton("OCR")
+        ocr_button = PushButton(self.tr("OCR"))
         ocr_button.clicked.connect(lambda: self.handler.post(self.ocr_log))
         layout.addWidget(ocr_button)
 
@@ -210,19 +210,24 @@ class DebugTab(Tab):
         img_w, img_h = self.region_widget.get_image_dimensions()
 
         lines = [
-            f"--- {self.tr('Selection Info')} ---",
-            f"x={info['x']}, y={info['y']}, w={info['w']}, h={info['h']}",
-            f"x1={info['x1']}, y1={info['y1']}, x2={info['x2']}, y2={info['y2']}",
-            f"ratio: rx={info['rx']:.4f}, ry={info['ry']:.4f}, rw={info['rw']:.4f}, rh={info['rh']:.4f}",
-            f"center: ({info['center_x']}, {info['center_y']}) = ({info['center_rx']:.4f}, {info['center_ry']:.4f})",
-            f"image size: {img_w}x{img_h}",
+            self.tr("--- {title} ---").format(title=self.tr('Selection Info')),
+            self.tr("x={x}, y={y}, w={w}, h={h}").format(**{k: info[k] for k in ['x', 'y', 'w', 'h']}),
+            self.tr("x1={x1}, y1={y1}, x2={x2}, y2={y2}").format(**{k: info[k] for k in ['x1', 'y1', 'x2', 'y2']}),
+            self.tr("ratio: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}").format(
+                rx=info['rx'], ry=info['ry'], rw=info['rw'], rh=info['rh']),
+            self.tr("center: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})").format(
+                cx=info['center_x'], cy=info['center_y'],
+                crx=info['center_rx'], cry=info['center_ry']),
+            self.tr("image size: {w}x{h}").format(w=img_w, h=img_h),
         ]
         self.result_edit.setPlainText("\n".join(lines))
 
     def _on_mouse_moved(self, px: int, py: int, rx: float, ry: float):
         """Update mouse position label."""
         self.mouse_pos_label.setText(
-            f"Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})"
+            self.tr("Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})").format(
+                px=px, py=py, rx=rx, ry=ry
+            )
         )
 
     def _copy_selection_info(self):
@@ -232,11 +237,17 @@ class DebugTab(Tab):
             return
 
         info = self._last_selection_info
-        text = (
-            f"x={info['x']}, y={info['y']}, w={info['w']}, h={info['h']}\n"
-            f"x1={info['x1']}, y1={info['y1']}, x2={info['x2']}, y2={info['y2']}\n"
-            f"rx={info['rx']:.4f}, ry={info['ry']:.4f}, rw={info['rw']:.4f}, rh={info['rh']:.4f}\n"
-            f"center: ({info['center_x']}, {info['center_y']}) ratio: ({info['center_rx']:.4f}, {info['center_ry']:.4f})"
+        text = self.tr(
+            "x={x}, y={y}, w={w}, h={h}\n"
+            "x1={x1}, y1={y1}, x2={x2}, y2={y2}\n"
+            "rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}\n"
+            "center: ({cx}, {cy}) ratio: ({crx:.4f}, {cry:.4f})"
+        ).format(
+            x=info['x'], y=info['y'], w=info['w'], h=info['h'],
+            x1=info['x1'], y1=info['y1'], x2=info['x2'], y2=info['y2'],
+            rx=info['rx'], ry=info['ry'], rw=info['rw'], rh=info['rh'],
+            cx=info['center_x'], cy=info['center_y'],
+            crx=info['center_rx'], cry=info['center_ry']
         )
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(text)
@@ -313,13 +324,13 @@ class DebugTab(Tab):
         og.device_manager.interaction = old_interaction
         self.update_result_text.emit(result)
         self.config['target_function'] = func_name
-        alert_info(self.tr(f"call success: {result}"))
+        alert_info(self.tr("call success: {result}").format(result=result))
 
     def ocr_log(self):
         try:
             result = og.executor.get_all_tasks()[0].ocr(log=True)
             self.update_result_text.emit(str(result))
-            alert_info(self.tr(f"OCR success (Logged): {result}"))
+            alert_info(self.tr("OCR success (Logged): {result}").format(result=result))
             folder = og.ok.screenshot.screenshot_folder
             if folder:
                 subprocess.Popen(r'explorer "{}"'.format(folder))

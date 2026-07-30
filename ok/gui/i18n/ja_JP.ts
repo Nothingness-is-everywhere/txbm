@@ -268,6 +268,42 @@
             <source>Selection Info</source>
             <translation>Selection Info</translation>
         </message>
+        <message>
+            <source>OCR</source>
+            <translation>OCR認識</translation>
+        </message>
+        <message>
+            <source>OCR success (Logged): {result}</source>
+            <translation>OCR認識結果(ログ記録): {result}</translation>
+        </message>
+        <message>
+            <source>--- {title} ---</source>
+            <translation>--- {title} ---</translation>
+        </message>
+        <message>
+            <source>x={x}, y={y}, w={w}, h={h}</source>
+            <translation>x={x}, y={y}, w={w}, h={h}</translation>
+        </message>
+        <message>
+            <source>x1={x1}, y1={y1}, x2={x2}, y2={y2}</source>
+            <translation>x1={x1}, y1={y1}, x2={x2}, y2={y2}</translation>
+        </message>
+        <message>
+            <source>ratio: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}</source>
+            <translation>比率: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}</translation>
+        </message>
+        <message>
+            <source>center: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})</source>
+            <translation>中心: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})</translation>
+        </message>
+        <message>
+            <source>image size: {w}x{h}</source>
+            <translation>画像サイズ: {w}x{h}</translation>
+        </message>
+        <message>
+            <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
+            <translation>マウス: ({px}, {py}) 比率: ({rx:.3f}, {ry:.3f})</translation>
+        </message>
     </context>
     <context>
         <name>GlobalConfigCard</name>
@@ -769,6 +805,10 @@
             <source>Stamina</source>
             <translation>Stamina</translation>
         </message>
+        <message>
+            <source>Starting...</source>
+            <translation>起動中...</translation>
+        </message>
     </context>
     <context>
         <name>StartController</name>
@@ -969,6 +1009,14 @@
         <message>
             <source>View Log</source>
             <translation>ログを表示</translation>
+        </message>
+        <message>
+            <source>OCR</source>
+            <translation>OCR認識</translation>
+        </message>
+        <message>
+            <source>OCR success (Logged): {result}</source>
+            <translation>OCR認識結果(ログ記録): {result}</translation>
         </message>
     </context>
     <context>
@@ -2777,6 +2825,32 @@
         <message>
             <source>No image loaded</source>
             <translation>No image loaded</translation>
+        </message>
+    </context>
+    <context>
+        <name>RunCodeTab</name>
+        <message>
+            <source>Enter Python code here...</source>
+            <translation>ここにPythonコードを入力...</translation>
+        </message>
+        <message>
+            <source>Run Code</source>
+            <translation>コード実行</translation>
+        </message>
+        <message>
+            <source>Output will be shown here...</source>
+            <translation>出力結果がここに表示されます...</translation>
+        </message>
+        <message>
+            <source>Run Python Code</source>
+            <translation>Pythonコード実行</translation>
+        </message>
+    </context>
+    <context>
+        <name>OverlayWidget</name>
+        <message>
+            <source>{x}, {y}, {xr:.3f}, {yr:.3f} (alt+right to copy)</source>
+            <translation>{x}, {y}, {xr:.3f}, {yr:.3f} (Alt+右クリックでコピー)</translation>
         </message>
     </context>
 </TS>

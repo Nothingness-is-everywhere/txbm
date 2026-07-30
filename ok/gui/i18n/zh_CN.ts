@@ -121,7 +121,7 @@
         <name>DebugTab</name>
         <message>
             <source>Dump Threads(HotKey:Ctrl+Alt+D)</source>
-            <translation>Dump Threads(快捷键:Ctrl+Alt+D)</translation>
+            <translation>转储线程(快捷键:Ctrl+Alt+D)</translation>
         </message>
         <message>
             <source>Capture Screenshot</source>
@@ -165,7 +165,7 @@
         </message>
         <message>
             <source>call success: {result}</source>
-            <translation>调用成功 success: {result}</translation>
+            <translation>调用成功: {result}</translation>
         </message>
         <message>
             <source>No OCR configured</source>
@@ -177,7 +177,7 @@
         </message>
         <message>
             <source>Drop or Select Screenshot</source>
-            <translation>选择截图</translation>
+            <translation>拖放或选择截图</translation>
         </message>
         <message>
             <source>Capture Success</source>
@@ -258,6 +258,52 @@
         <message>
             <source>Selection Info</source>
             <translation>选区信息</translation>
+        </message>
+        <message>
+            <source>OCR</source>
+            <translation>OCR识别</translation>
+        </message>
+        <message>
+            <source>OCR success (Logged): {result}</source>
+            <translation>OCR识别结果(已记录): {result}</translation>
+        </message>
+        <message>
+            <source>--- {title} ---</source>
+            <translation>--- {title} ---</translation>
+        </message>
+        <message>
+            <source>x={x}, y={y}, w={w}, h={h}</source>
+            <translation>x={x}, y={y}, w={w}, h={h}</translation>
+        </message>
+        <message>
+            <source>x1={x1}, y1={y1}, x2={x2}, y2={y2}</source>
+            <translation>x1={x1}, y1={y1}, x2={x2}, y2={y2}</translation>
+        </message>
+        <message>
+            <source>ratio: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}</source>
+            <translation>比例: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}</translation>
+        </message>
+        <message>
+            <source>center: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})</source>
+            <translation>中心: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})</translation>
+        </message>
+        <message>
+            <source>image size: {w}x{h}</source>
+            <translation>图片尺寸: {w}x{h}</translation>
+        </message>
+        <message>
+            <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
+            <translation>鼠标: ({px}, {py}) 比例: ({rx:.3f}, {ry:.3f})</translation>
+        </message>
+        <message>
+            <source>x={x}, y={y}, w={w}, h={h}
+x1={x1}, y1={y1}, x2={x2}, y2={y2}
+rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}
+center: ({cx}, {cy}) ratio: ({crx:.4f}, {cry:.4f})</source>
+            <translation>x={x}, y={y}, w={w}, h={h}
+x1={x1}, y1={y1}, x2={x2}, y2={y2}
+rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}
+中心: ({cx}, {cy}) 比例: ({crx:.4f}, {cry:.4f})</translation>
         </message>
     </context>
     <context>
@@ -778,6 +824,10 @@
             <source>Stamina</source>
             <translation>体力</translation>
         </message>
+        <message>
+            <source>Starting...</source>
+            <translation>正在启动...</translation>
+        </message>
     </context>
     <context>
         <name>StartController</name>
@@ -982,6 +1032,14 @@
         <message>
             <source>View Log</source>
             <translation>查看日志</translation>
+        </message>
+        <message>
+            <source>OCR</source>
+            <translation>OCR识别</translation>
+        </message>
+        <message>
+            <source>OCR success (Logged): {result}</source>
+            <translation>OCR识别结果(已记录): {result}</translation>
         </message>
     </context>
     <context>
@@ -2783,6 +2841,32 @@
         <message>
             <source>Select File or Folder</source>
             <translation>选择文件或文件夹</translation>
+        </message>
+    </context>
+    <context>
+        <name>RunCodeTab</name>
+        <message>
+            <source>Enter Python code here...</source>
+            <translation>在此输入Python代码...</translation>
+        </message>
+        <message>
+            <source>Run Code</source>
+            <translation>运行代码</translation>
+        </message>
+        <message>
+            <source>Output will be shown here...</source>
+            <translation>输出结果将在此显示...</translation>
+        </message>
+        <message>
+            <source>Run Python Code</source>
+            <translation>运行Python代码</translation>
+        </message>
+    </context>
+    <context>
+        <name>OverlayWidget</name>
+        <message>
+            <source>{x}, {y}, {xr:.3f}, {yr:.3f} (alt+right to copy)</source>
+            <translation>{x}, {y}, {xr:.3f}, {yr:.3f} (Alt+右键复制)</translation>
         </message>
     </context>
 </TS>

@@ -95,7 +95,7 @@ class StartTab(Tab):
         self.open_logs_button.clicked.connect(self.open_logs)
         self.debug_layout.addWidget(self.open_logs_button)
 
-        self.ocr_button = PushButton(FluentIcon.SEARCH, "OCR")
+        self.ocr_button = PushButton(FluentIcon.SEARCH, self.tr("OCR"))
         self.ocr_button.clicked.connect(self.ocr_log)
         self.debug_layout.addWidget(self.ocr_button)
 
@@ -235,7 +235,7 @@ class StartTab(Tab):
                 return
             result = og.executor.get_all_tasks()[0].ocr(log=True, screenshot=True)
             from ok.gui.util.Alert import alert_info
-            alert_info(self.tr(f"OCR success (Logged): {result}"))
+            alert_info(self.tr("OCR success (Logged): {result}").format(result=result))
             folder = og.ok.screenshot.screenshot_folder
             if folder:
                 folder_abs = os.path.abspath(folder)

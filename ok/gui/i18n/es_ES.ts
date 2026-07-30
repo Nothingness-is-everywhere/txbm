@@ -268,6 +268,42 @@
             <source>Selection Info</source>
             <translation>Selection Info</translation>
         </message>
+        <message>
+            <source>OCR</source>
+            <translation>OCR</translation>
+        </message>
+        <message>
+            <source>OCR success (Logged): {result}</source>
+            <translation>OCR éxito (registrado): {result}</translation>
+        </message>
+        <message>
+            <source>--- {title} ---</source>
+            <translation>--- {title} ---</translation>
+        </message>
+        <message>
+            <source>x={x}, y={y}, w={w}, h={h}</source>
+            <translation>x={x}, y={y}, w={w}, h={h}</translation>
+        </message>
+        <message>
+            <source>x1={x1}, y1={y1}, x2={x2}, y2={y2}</source>
+            <translation>x1={x1}, y1={y1}, x2={x2}, y2={y2}</translation>
+        </message>
+        <message>
+            <source>ratio: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}</source>
+            <translation>ratio: rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}</translation>
+        </message>
+        <message>
+            <source>center: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})</source>
+            <translation>centro: ({cx}, {cy}) = ({crx:.4f}, {cry:.4f})</translation>
+        </message>
+        <message>
+            <source>image size: {w}x{h}</source>
+            <translation>tamaño de imagen: {w}x{h}</translation>
+        </message>
+        <message>
+            <source>Mouse: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</source>
+            <translation>Ratón: ({px}, {py}) ratio: ({rx:.3f}, {ry:.3f})</translation>
+        </message>
     </context>
     <context>
         <name>GlobalConfigCard</name>
@@ -769,6 +805,10 @@
             <source>Stamina</source>
             <translation>Stamina</translation>
         </message>
+        <message>
+            <source>Starting...</source>
+            <translation>Iniciando...</translation>
+        </message>
     </context>
     <context>
         <name>StartController</name>
@@ -977,6 +1017,10 @@
         <message>
             <source>View Log</source>
             <translation>Ver registro</translation>
+        </message>
+        <message>
+            <source>OCR success (Logged): {result}</source>
+            <translation>OCR éxito (registrado): {result}</translation>
         </message>
     </context>
     <context>
@@ -2785,6 +2829,32 @@
         <message>
             <source>No image loaded</source>
             <translation>No image loaded</translation>
+        </message>
+    </context>
+    <context>
+        <name>RunCodeTab</name>
+        <message>
+            <source>Enter Python code here...</source>
+            <translation>Ingrese código Python aquí...</translation>
+        </message>
+        <message>
+            <source>Run Code</source>
+            <translation>Ejecutar código</translation>
+        </message>
+        <message>
+            <source>Output will be shown here...</source>
+            <translation>La salida se mostrará aquí...</translation>
+        </message>
+        <message>
+            <source>Run Python Code</source>
+            <translation>Ejecutar código Python</translation>
+        </message>
+    </context>
+    <context>
+        <name>OverlayWidget</name>
+        <message>
+            <source>{x}, {y}, {xr:.3f}, {yr:.3f} (alt+right to copy)</source>
+            <translation>{x}, {y}, {xr:.3f}, {yr:.3f} (alt+derecha para copiar)</translation>
         </message>
     </context>
 </TS>
