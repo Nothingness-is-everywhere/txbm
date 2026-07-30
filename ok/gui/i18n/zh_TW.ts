@@ -347,7 +347,7 @@
         </message>
         <message>
             <source>Triggers</source>
-            <translation>即時觸發</translation>
+            <translation>觸發器</translation>
         </message>
         <message>
             <source>Capture</source>
@@ -416,6 +416,10 @@
         <message>
             <source>Run Code</source>
             <translation>執行程式碼</translation>
+        </message>
+        <message>
+            <source>触发器状态</source>
+            <translation>觸發器狀態</translation>
         </message>
     </context>
     <context>

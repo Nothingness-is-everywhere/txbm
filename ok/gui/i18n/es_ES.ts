@@ -417,6 +417,10 @@
             <source>Run Code</source>
             <translation>Ejecutar código</translation>
         </message>
+        <message>
+            <source>触发器状态</source>
+            <translation>Estado de disparador</translation>
+        </message>
     </context>
     <context>
         <name>MessageWindow</name>

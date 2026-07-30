@@ -166,7 +166,7 @@ class MainWindow(FluentWindow):
         # Add Task Execution Status tabs
         from ok.gui.tasks.TaskExecutionTab import TaskExecutionTab
         self.trigger_execution_tab = TaskExecutionTab(task_category="trigger")
-        self.addSubInterface(self.trigger_execution_tab, FluentIcon.SYNC, self.tr('实时触发'),
+        self.addSubInterface(self.trigger_execution_tab, FluentIcon.SYNC, self.tr('触发器状态'),
                              position=NavigationItemPosition.SCROLL)
         self.onetime_execution_tab = TaskExecutionTab(task_category="onetime")
         self.addSubInterface(self.onetime_execution_tab, FluentIcon.UPDATE, self.tr('周常日常'),

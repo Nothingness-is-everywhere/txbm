@@ -407,6 +407,10 @@
             <source>Run Code</source>
             <translation>Run Code</translation>
         </message>
+        <message>
+            <source>触发器状态</source>
+            <translation>Trigger Status</translation>
+        </message>
     </context>
     <context>
         <name>MessageWindow</name>

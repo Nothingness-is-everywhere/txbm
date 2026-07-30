@@ -348,7 +348,7 @@
         </message>
         <message>
             <source>Triggers</source>
-            <translation>실시간 트리거</translation>
+            <translation>트리거</translation>
         </message>
         <message>
             <source>Capture</source>
@@ -417,6 +417,10 @@
         <message>
             <source>Run Code</source>
             <translation>코드 실행</translation>
+        </message>
+        <message>
+            <source>触发器状态</source>
+            <translation>트리거 상태</translation>
         </message>
     </context>
     <context>

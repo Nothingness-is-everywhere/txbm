@@ -25,12 +25,12 @@ STATUS_MAP = {
 }
 
 TYPE_MAP = {
-    "trigger": "实时触发",
+    "trigger": "触发器",
     "onetime": "周常日常",
 }
 
 CATEGORY_TITLE_MAP = {
-    "trigger": "实时触发 - 执行状态",
+    "trigger": "触发器状态",
     "onetime": "周常日常 - 执行状态",
     "all": "执行状态",
 }

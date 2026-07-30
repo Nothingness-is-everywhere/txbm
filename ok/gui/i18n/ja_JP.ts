@@ -417,6 +417,10 @@
             <source>Run Code</source>
             <translation>コード実行</translation>
         </message>
+        <message>
+            <source>触发器状态</source>
+            <translation>トリガー状態</translation>
+        </message>
     </context>
     <context>
         <name>MessageWindow</name>

@@ -338,7 +338,7 @@
         </message>
         <message>
             <source>Triggers</source>
-            <translation>实时触发</translation>
+            <translation>触发器</translation>
         </message>
         <message>
             <source>Schedule</source>
@@ -406,6 +406,10 @@
         <message>
             <source>Run Code</source>
             <translation>运行代码</translation>
+        </message>
+        <message>
+            <source>触发器状态</source>
+            <translation>触发器状态</translation>
         </message>
     </context>
     <context>
