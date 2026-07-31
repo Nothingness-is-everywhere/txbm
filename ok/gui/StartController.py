@@ -38,14 +38,26 @@ class StartController(QObject):
         communicate.task.emit(task)
 
     def start(self, task=None, exit_after=False):
-        if self._is_starting or (og.executor is not None and not og.executor.paused):
-            logger.info(f"start: already starting or running, ignore. _is_starting={self._is_starting}, paused={og.executor.paused if og.executor else 'N/A'}")
+        if self._is_starting:
+            logger.info(f"start: already starting, ignore. _is_starting={self._is_starting}")
+            return
+        # If a specific task is requested (e.g. onetime task "Start" button),
+        # allow it to queue even while the executor is running — do_start
+        # handles queuing when another task is current. Only block the global
+        # no-arg start when already running.
+        if task is None and og.executor is not None and not og.executor.paused:
+            logger.info(f"start: already running, ignore. paused={og.executor.paused if og.executor else 'N/A'}")
             return
         self.handler.post(lambda: self.do_start(task, exit_after))
 
     def do_start(self, task=None, exit_after=False):
-        if self._is_starting or (og.executor is not None and not og.executor.paused):
-            logger.info(f"do_start: already starting or running, ignore. _is_starting={self._is_starting}, paused={og.executor.paused if og.executor else 'N/A'}")
+        if self._is_starting:
+            logger.info(f"do_start: already starting, ignore. _is_starting={self._is_starting}")
+            return False
+        # Allow a specific task to queue even while the executor is running;
+        # the queuing logic below handles the case where another task is current.
+        if task is None and og.executor is not None and not og.executor.paused:
+            logger.info(f"do_start: already running, ignore. paused={og.executor.paused if og.executor else 'N/A'}")
             return False
         self._is_starting = True
         communicate.starting_emulator.emit(False, None, self.start_timeout)

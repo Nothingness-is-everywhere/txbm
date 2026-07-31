@@ -48,7 +48,7 @@ class GameStartupTask(BaseTask):
         self.name = "GameStartup"
         self.description = "自动处理游戏启动弹窗（公告、签到）并读取体力"
         self.enable_after_start = True
-        self.visible = False  # Hide from GUI task list, this is a startup-only task
+        self.visible = True  # Show in the 周常日常 tab
 
     def on_create(self):
         self._enabled = True
@@ -238,6 +238,11 @@ class GameStartupTask(BaseTask):
         logger.info(f"Running {self.name}")
         logger.info("=" * 60)
 
+        # 如果已经在主页，跳过启动流程
+        if self._is_already_home():
+            logger.info("Already on home screen, skipping startup sequence")
+            return True
+
         try:
             # Wait for game to become ready (state-driven)
             self.wait_for_game_ready()
@@ -259,6 +264,39 @@ class GameStartupTask(BaseTask):
             logger.error(f"{self.name} failed with error: {e}")
             import traceback
             traceback.print_exc()
+            return False
+
+    def _is_already_home(self) -> bool:
+        """Check if already on the home screen (skip startup if so)."""
+        try:
+            import cv2
+            from pathlib import Path
+            frame = self.executor.frame
+            if frame is None:
+                frame = self.next_frame()
+            if frame is None:
+                return False
+            tpl_path = Path(__file__).resolve().parent.parent.parent / "templates" / "home_profile_button.png"
+            if not tpl_path.exists():
+                return False
+            tpl = cv2.imdecode(np.fromfile(str(tpl_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+            if tpl is None:
+                return False
+            roi = [0.0343, 0.0359, 0.2926, 0.0916]
+            h, w = frame.shape[:2]
+            x1, y1 = int(w * roi[0]), int(h * roi[1])
+            x2, y2 = int(w * roi[2]), int(h * roi[3])
+            region = frame[y1:y2, x1:x2]
+            res = cv2.matchTemplate(cv2.cvtColor(region, cv2.COLOR_BGR2GRAY),
+                                    cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY),
+                                    cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            if max_val >= 0.70:
+                logger.info(f"Already on home screen (conf={max_val:.3f})")
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"_is_already_home check failed: {e}")
             return False
 
     def _execute_startup_sequence(self) -> bool:

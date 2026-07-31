@@ -26,10 +26,10 @@ config = {
     },
     "onetime_tasks": [
         ["ok.automation.game_startup_task", "GameStartupTask"],
+        ["ok_tasks.HomeRedDotTask", "HomeRedDotTask"],
     ],
     "trigger_tasks": [
         ["ok_tasks.NetworkErrorHandler", "NetworkErrorHandler"],
-        ["ok_tasks.HomeRedDotTask", "HomeRedDotTask"],
     ],
     "auto_start_on_gui": True,
 }

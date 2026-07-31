@@ -23,7 +23,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
-from ok import TriggerTask
+from ok.task.task import BaseTask
 
 logger = logging.getLogger("HomeRedDotTask")
 
@@ -50,12 +50,25 @@ _PROFILE_ROI = [0.0343, 0.0359, 0.2926, 0.0916]
 
 DEFAULT_CONFIG = {
     "_enabled": True,
+    # 是否每次启动自动执行（配置面板仅显示此项，其他技术配置项隐藏）
+    "enable_after_start": False,
     # Home-screen detection via profile-button template match
     "home_template_path": "templates/home_profile_button.png",
     "home_template_roi": list(_PROFILE_ROI),
     "home_threshold": 0.70,
     # Red-dot detection (HSV) — searched inside the same profile-button ROI
     "red_dot_roi": list(_PROFILE_ROI),
+    # Follow-up red-dot ROI: after tapping the profile button, a second red
+    # dot may appear on the opened page at this region.
+    # Selection: x=404,y=270,w=276,h=99 (rx=0.3741, ry=0.1406, rw=0.2556, rh=0.0516)
+    "followup_red_dot_roi": [0.3741, 0.1406, 0.6297, 0.1922],
+    # Reward red-dot ROI: after tapping the follow-up red dot, a reward
+    # button may light up here. Tap only if a red dot is present.
+    # Selection: x=597,y=1591,w=306,h=99 (rx=0.5528, ry=0.8286, rw=0.2833, rh=0.0500)
+    "reward_red_dot_roi": [0.5528, 0.8286, 0.8361, 0.8786],
+    # Close-button ROI: tap the centre to return to the home screen.
+    # Selection: x=479,y=1772,w=121,h=118 (rx=0.4435, ry=0.9229, rw=0.1120, rh=0.0615)
+    "close_button_roi": [0.4435, 0.9229, 0.5555, 0.9844],
     # HSV red range. Red wraps around hue 0/180, so two intervals are used.
     "hsv_lower1": [0, 80, 80],
     "hsv_upper1": [10, 255, 255],
@@ -72,25 +85,34 @@ DEFAULT_CONFIG = {
 }
 
 
-class HomeRedDotTask(TriggerTask):
+class HomeRedDotTask(BaseTask):
     """
-    Detects the red notification dot on the home-screen profile button and taps it.
+    周常日常任务：检测主页个人信息按钮红点并完成领取流程。
 
-    定时触发的主页红点检测任务。
+    One-time task (shown under the "周常日常" tab). Run flow:
+      1. Confirm we are on the home screen.
+      2. Detect the red dot on the profile button and tap it.
+      3. Detect the follow-up red dot and tap it.
+      4. Detect the reward red dot and tap it (if present).
+      5. Tap the close button to return to the home screen.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.name = "主页红点点击"
-        self.description = "检测主页个人信息按钮上的红点并点击"
-        self.trigger_interval = 3
+        self.name = "获取好友体力"
+        self.description = "检测主页红点，依次点击红点领取奖励，最后关闭返回主页"
         self.visible = True
         self.default_config = dict(DEFAULT_CONFIG)
+        # 配置面板只显示"是否每次启动执行"，其他技术配置项隐藏
+        self.config_type = {k: {'hidden': True} for k in DEFAULT_CONFIG
+                            if not k.startswith('_') and k != 'enable_after_start'}
+        self.config_description = {"enable_after_start": "是否每次启动执行"}
         self._home_tpl: Optional[np.ndarray] = None
         self._last_click_time: float = 0.0
 
     def on_create(self):
         self._enabled = self.config.get("_enabled", True)
+        self.enable_after_start = self.config.get("enable_after_start", False)
         self._load_template()
 
     # ------------------------------------------------------------------
@@ -99,7 +121,13 @@ class HomeRedDotTask(TriggerTask):
     def _load_template(self):
         rel = self.config.get("home_template_path", DEFAULT_CONFIG["home_template_path"])
         abs_path = str(resolve_repo_path(rel))
-        tpl = cv2.imread(abs_path, cv2.IMREAD_COLOR)
+        # cv2.imread does not support non-ASCII paths on Windows; use
+        # np.fromfile + cv2.imdecode instead.
+        try:
+            tpl = cv2.imdecode(np.fromfile(abs_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+        except Exception as e:
+            logger.warning(f"Failed to read home template: {abs_path} ({e})")
+            tpl = None
         if tpl is None:
             logger.warning(f"Home template not found, home detection disabled: {abs_path}")
             self._home_tpl = None
@@ -144,8 +172,49 @@ class HomeRedDotTask(TriggerTask):
         # 5. Wait before any follow-up step
         self.sleep(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
 
-        # TODO: 后续步骤待用户确认 —— 在此处补充点击红点之后的流程
-        # e.g. enter the profile menu, claim rewards, then return to home.
+        # 6. 后续步骤：点击个人信息红点后，检测第二个选区红点并点击
+        followup_roi = self.config.get(
+            "followup_red_dot_roi", DEFAULT_CONFIG["followup_red_dot_roi"])
+        frame2 = self.next_frame()
+        if frame2 is None:
+            logger.debug("No frame for follow-up red-dot detection")
+            return True
+        dot2 = self._detect_red_dot(frame2, followup_roi)
+        if dot2 is None:
+            logger.debug("No follow-up red dot detected")
+            return True
+        fx, fy = dot2
+        logger.info(f"Follow-up red dot detected, tapping at ({fx}, {fy})")
+        self.click(fx, fy)
+        self.sleep(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+
+        # 7. 后续步骤：检测奖励红点（选区A），有就点击，没有就跳过
+        reward_roi = self.config.get(
+            "reward_red_dot_roi", DEFAULT_CONFIG["reward_red_dot_roi"])
+        frame3 = self.next_frame()
+        if frame3 is not None:
+            dot3 = self._detect_red_dot(frame3, reward_roi)
+            if dot3 is not None:
+                # 点击选区A中心（按钮中心）而非红点质心，避免点歪
+                x1, y1, x2, y2 = self._roi_to_pixels(
+                    reward_roi, frame3.shape[1], frame3.shape[0])
+                rx, ry = (x1 + x2) // 2, (y1 + y2) // 2
+                logger.info(f"Reward red dot detected, tapping button centre at ({rx}, {ry})")
+                self.click(rx, ry)
+                self.sleep(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+
+        # 8. 点击关闭按钮（选区B）回到主界面
+        close_roi = self.config.get(
+            "close_button_roi", DEFAULT_CONFIG["close_button_roi"])
+        frame4 = self.next_frame()
+        if frame4 is not None:
+            x1, y1, x2, y2 = self._roi_to_pixels(
+                close_roi, frame4.shape[1], frame4.shape[0])
+            close_x = (x1 + x2) // 2
+            close_y = (y1 + y2) // 2
+            logger.info(f"Closing back to home, tapping close button at ({close_x}, {close_y})")
+            self.click(close_x, close_y)
+            self.sleep(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
 
         return True
 
@@ -182,9 +251,10 @@ class HomeRedDotTask(TriggerTask):
     # ------------------------------------------------------------------
     # Red-dot detection (HSV)
     # ------------------------------------------------------------------
-    def _detect_red_dot(self, frame: np.ndarray) -> Optional[Tuple[int, int]]:
-        """Detect red pixels inside the profile-button ROI and return the centroid."""
-        roi = self.config.get("red_dot_roi", DEFAULT_CONFIG["red_dot_roi"])
+    def _detect_red_dot(self, frame: np.ndarray, roi=None) -> Optional[Tuple[int, int]]:
+        """Detect red pixels inside the given ROI and return the centroid."""
+        if roi is None:
+            roi = self.config.get("red_dot_roi", DEFAULT_CONFIG["red_dot_roi"])
         h, w = frame.shape[:2]
         x1, y1, x2, y2 = self._roi_to_pixels(roi, w, h)
         region = frame[y1:y2, x1:x2]

@@ -150,7 +150,7 @@ class MainWindow(FluentWindow):
                 if self.first_task_tab is None:
                     self.first_task_tab = self.onetime_tab
                 logger.debug(f"add default onetime_tab len {len(standalone_tasks)}")
-                self.addSubInterface(self.onetime_tab, FluentIcon.BOOK_SHELF, self.tr('Tasks'),
+                self.addSubInterface(self.onetime_tab, FluentIcon.BOOK_SHELF, self.tr('周常日常'),
                                      position=NavigationItemPosition.SCROLL)
 
             for group_name, tasks_in_group in groups.items():
@@ -169,7 +169,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.trigger_execution_tab, FluentIcon.SYNC, self.tr('触发器状态'),
                              position=NavigationItemPosition.SCROLL)
         self.onetime_execution_tab = TaskExecutionTab(task_category="onetime")
-        self.addSubInterface(self.onetime_execution_tab, FluentIcon.UPDATE, self.tr('周常日常'),
+        self.addSubInterface(self.onetime_execution_tab, FluentIcon.UPDATE, self.tr('周常日常运行情况'),
                              position=NavigationItemPosition.SCROLL)
 
         # Add custom tabs that should appear after built-in task tabs
