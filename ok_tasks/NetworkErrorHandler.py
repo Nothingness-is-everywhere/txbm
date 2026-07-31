@@ -223,7 +223,8 @@ class NetworkErrorHandler(TriggerTask):
         self._last_handle_fingerprint: str = ""
 
     def on_create(self):
-        self._enabled = self.config.get("_enabled", False)
+        # Default to enabled so the network popup handler is on by default.
+        self._enabled = self.config.get("_enabled", True)
         self._load_templates()
 
     # ------------------------------------------------------------------
