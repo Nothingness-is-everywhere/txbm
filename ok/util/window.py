@@ -66,19 +66,19 @@ def get_exe_by_hwnd(hwnd):
             name = process.name()
         except (psutil.AccessDenied, psutil.NoSuchProcess) as e:
             name = ""
-            logger.error("get_exe_by_hwnd process.name() error", e)
+            logger.debug(f"get_exe_by_hwnd process.name() skipped pid={pid} ({type(e).__name__})")
 
         try:
             exe = process.exe()
         except (psutil.AccessDenied, psutil.NoSuchProcess) as e:
             exe = ""
-            logger.error("get_exe_by_hwnd process.exe() error", e)
+            logger.debug(f"get_exe_by_hwnd process.exe() skipped pid={pid} ({type(e).__name__})")
 
         try:
             cmdline = process.cmdline()
         except (psutil.AccessDenied, psutil.NoSuchProcess) as e:
             cmdline = ""
-            logger.error("get_exe_by_hwnd process.cmdline() error", e)
+            logger.debug(f"get_exe_by_hwnd process.cmdline() skipped pid={pid} ({type(e).__name__})")
 
         return name, exe, cmdline
     except Exception as e:

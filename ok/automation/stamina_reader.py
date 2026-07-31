@@ -39,9 +39,9 @@ logger = logging.getLogger("stamina_reader")
 
 STAMINA_ROI_CONFIG = {
     "expedition": {
-        "x_start": 0.7065,
-        "x_end": 0.7861,
-        "y_start": 0.7432,
+        "x_start": 0.7435,
+        "x_end": 0.7935,
+        "y_start": 0.7474,
         "y_end": 0.7646,
     },
     "training": {
@@ -463,12 +463,16 @@ def get_stamina(
             _expedition_stamina = _reader_instance.read_stamina(
                 "expedition", force_refresh=True
             )
+        if _expedition_stamina is not None:
+            _expedition_stamina.max_val = EXPEDITION_STAMINA_MAX
         return _expedition_stamina
     elif stamina_type == "training":
         if force_refresh or _training_stamina is None:
             _training_stamina = _reader_instance.read_stamina(
                 "training", force_refresh=True
             )
+        if _training_stamina is not None:
+            _training_stamina.max_val = TRAINING_STAMINA_MAX
         return _training_stamina
     else:
         logger.error(f"Unknown stamina type: {stamina_type}")
@@ -520,13 +524,13 @@ def update_global_stamina(force_refresh: bool = False) -> Dict[str, Optional[Sta
     exp = values.get("expedition")
     if exp is not None:
         EXPEDITION_STAMINA_VALUE.current = exp.current
-        EXPEDITION_STAMINA_VALUE.max_val = exp.max_val
+        EXPEDITION_STAMINA_VALUE.max_val = EXPEDITION_STAMINA_MAX
         EXPEDITION_STAMINA = exp.current
 
     train = values.get("training")
     if train is not None:
         TRAINING_STAMINA_VALUE.current = train.current
-        TRAINING_STAMINA_VALUE.max_val = train.max_val
+        TRAINING_STAMINA_VALUE.max_val = TRAINING_STAMINA_MAX
         TRAINING_STAMINA = train.current
 
     try:
