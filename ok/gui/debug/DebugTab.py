@@ -4,7 +4,7 @@ from ctypes import windll, wintypes
 
 from PySide6.QtCore import Qt, Signal, QCoreApplication
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QWidget, QFileDialog, QCompleter, QVBoxLayout, QHBoxLayout, QSizePolicy
+from PySide6.QtWidgets import QWidget, QFileDialog, QCompleter, QVBoxLayout, QHBoxLayout, QSizePolicy, QDialog
 from _ctypes import byref
 from qfluentwidgets import PushButton, FlowLayout, ComboBox, SearchLineEdit, TextEdit, BodyLabel, StrongBodyLabel
 
@@ -131,6 +131,10 @@ class DebugTab(Tab):
         clear_btn.clicked.connect(self._region_clear_selection)
         toolbar.addWidget(clear_btn)
 
+        maximize_btn = PushButton(self.tr("最大化选择区域"))
+        maximize_btn.clicked.connect(self._region_maximize)
+        toolbar.addWidget(maximize_btn)
+
         toolbar.addStretch()
 
         self.mouse_pos_label = BodyLabel(self.tr("Mouse: --"))
@@ -203,6 +207,35 @@ class DebugTab(Tab):
         self.region_widget.clear_selection()
         self.result_edit.clear()
         self._last_selection_info = None
+
+    def _region_maximize(self):
+        """Open the region widget in a near-fullscreen dialog for easier selection."""
+        current_pixmap = self.region_widget.get_pixmap()
+        if current_pixmap is None:
+            alert_info(self.tr("Capture or load an image first"))
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self.tr("Region Selection (Maximized)"))
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            dialog.resize(int(geo.width() * 0.9), int(geo.height() * 0.9))
+        else:
+            dialog.resize(1200, 800)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+        big_widget = RegionSelectImageWidget()
+        big_widget.set_pixmap(current_pixmap)
+        big_widget.mouse_moved.connect(self._on_mouse_moved)
+
+        def _on_selected(info):
+            self._on_region_selected(info)
+            self.region_widget.set_selection_from_image(info['x'], info['y'], info['w'], info['h'])
+
+        big_widget.region_selected.connect(_on_selected)
+        layout.addWidget(big_widget, stretch=1)
+        dialog.exec()
 
     def _on_region_selected(self, info: dict):
         """Handle region selection and display coordinate info."""

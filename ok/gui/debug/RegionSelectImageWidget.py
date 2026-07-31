@@ -240,3 +240,23 @@ class RegionSelectImageWidget(QWidget):
         if self._pixmap:
             return (self._pixmap.width(), self._pixmap.height())
         return (0, 0)
+
+    def get_pixmap(self) -> Optional[QPixmap]:
+        """Return the current pixmap for reuse (e.g. in a maximized view)."""
+        return self._pixmap
+
+    def set_pixmap(self, pixmap: QPixmap):
+        """Set image directly from a QPixmap (reuses without conversion)."""
+        self._pixmap = pixmap
+        self._update_display_pixmap()
+        self._selection = None
+        self.update()
+
+    def set_selection_from_image(self, x: int, y: int, w: int, h: int):
+        """Set the selection rect from original image coordinates."""
+        if self._pixmap is None or self._display_pixmap is None:
+            return
+        tl = self._image_to_widget(QPoint(x, y))
+        br = self._image_to_widget(QPoint(x + w, y + h))
+        self._selection = QRect(tl, br).normalized()
+        self.update()
