@@ -50,8 +50,8 @@ _PROFILE_ROI = [0.0343, 0.0359, 0.2926, 0.0916]
 
 DEFAULT_CONFIG = {
     "_enabled": True,
-    # 是否每次启动自动执行（配置面板仅显示此项，其他技术配置项隐藏）
-    "enable_after_start": False,
+    # 是否跟随"周常日常"大启动按钮一起执行（配置面板仅显示此项，其他技术配置项隐藏）
+    "follow_batch_start": True,
     # Home-screen detection via profile-button template match
     "home_template_path": "templates/home_profile_button.png",
     "home_template_roi": list(_PROFILE_ROI),
@@ -103,16 +103,18 @@ class HomeRedDotTask(BaseTask):
         self.description = "检测主页红点，依次点击红点领取奖励，最后关闭返回主页"
         self.visible = True
         self.default_config = dict(DEFAULT_CONFIG)
-        # 配置面板只显示"是否每次启动执行"，其他技术配置项隐藏
+        # 配置面板只显示"是否跟随大开始启动"，其他技术配置项隐藏
         self.config_type = {k: {'hidden': True} for k in DEFAULT_CONFIG
-                            if not k.startswith('_') and k != 'enable_after_start'}
-        self.config_description = {"enable_after_start": "是否每次启动执行"}
+                            if not k.startswith('_') and k != 'follow_batch_start'}
+        self.config_description = {"follow_batch_start": "是否跟随大开始启动"}
+        # 本任务不跟随框架启动自动运行，仅在大启动按钮按下时执行
+        self.enable_after_start = False
         self._home_tpl: Optional[np.ndarray] = None
         self._last_click_time: float = 0.0
 
     def on_create(self):
         self._enabled = self.config.get("_enabled", True)
-        self.enable_after_start = self.config.get("enable_after_start", False)
+        self.follow_batch_start = self.config.get("follow_batch_start", True)
         self._load_template()
 
     # ------------------------------------------------------------------
@@ -140,82 +142,90 @@ class HomeRedDotTask(BaseTask):
     # Main entry point (called by the framework)
     # ------------------------------------------------------------------
     def run(self):
-        """Main trigger entry point called periodically by the framework."""
+        """
+        周常日常一次性任务：主页红点领取完整流程（步骤串联，1 秒间隔）。
+
+        Flow:
+          1. 确认在主页
+          2. 点击个人信息红点 -> 等 1s
+          3. 点击第二个选区红点 -> 等 1s
+          4. 选区A有红点就点击按钮中心 -> 等 1s
+          5. 点击选区B关闭按钮回主页 -> 等 1s
+        """
+        step_sleep = 1.0  # 每步 1 秒缓冲
+
         frame = self.executor.frame
         if frame is None:
-            logger.debug("No frame available, skipping")
+            frame = self.next_frame()
+        if frame is None:
+            logger.warning("获取好友体力：无画面可用，终止")
             return False
 
-        # 1. Confirm we are on the home screen
+        # 1. 确认在主页（主页判断不通过直接终止，不继续）
         if not self._is_home(frame):
+            logger.info("获取好友体力：不在主页，终止")
             return False
 
-        # 2. Detect the red dot
+        # 2. 点击个人信息红点
         dot = self._detect_red_dot(frame)
         if dot is None:
-            logger.debug("No red dot detected on profile button")
+            logger.info("获取好友体力：个人信息按钮无红点，直接返回")
             return False
-
-        # 3. Cooldown check
-        cooldown = self.config.get("cooldown_seconds", DEFAULT_CONFIG["cooldown_seconds"])
-        now = time.time()
-        if now - self._last_click_time < cooldown:
-            logger.debug(f"Red dot found but in cooldown ({now - self._last_click_time:.1f}s)")
-            return False
-
-        # 4. Tap the red dot
         cx, cy = dot
-        logger.info(f"Red dot detected, tapping at ({cx}, {cy})")
+        logger.info(f"[步骤2/5] 点击个人信息红点 ({cx}, {cy})")
         self.click(cx, cy)
-        self._last_click_time = time.time()
+        self.sleep(step_sleep)
 
-        # 5. Wait before any follow-up step
-        self.sleep(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
-
-        # 6. 后续步骤：点击个人信息红点后，检测第二个选区红点并点击
+        # 3. 点击第二个选区（周常日常入口）红点
         followup_roi = self.config.get(
             "followup_red_dot_roi", DEFAULT_CONFIG["followup_red_dot_roi"])
         frame2 = self.next_frame()
         if frame2 is None:
-            logger.debug("No frame for follow-up red-dot detection")
-            return True
-        dot2 = self._detect_red_dot(frame2, followup_roi)
-        if dot2 is None:
-            logger.debug("No follow-up red dot detected")
-            return True
-        fx, fy = dot2
-        logger.info(f"Follow-up red dot detected, tapping at ({fx}, {fy})")
-        self.click(fx, fy)
-        self.sleep(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+            logger.info("[步骤3/5] 无画面，跳过第二步点击")
+        else:
+            dot2 = self._detect_red_dot(frame2, followup_roi)
+            if dot2 is None:
+                logger.info("[步骤3/5] 第二选区无红点，仍等待页面加载 1s")
+            else:
+                fx, fy = dot2
+                logger.info(f"[步骤3/5] 点击第二选区红点 ({fx}, {fy})")
+                self.click(fx, fy)
+        self.sleep(step_sleep)
 
-        # 7. 后续步骤：检测奖励红点（选区A），有就点击，没有就跳过
+        # 4. 选区A（奖励按钮）：有红点就点按钮中心，没有就跳过
         reward_roi = self.config.get(
             "reward_red_dot_roi", DEFAULT_CONFIG["reward_red_dot_roi"])
         frame3 = self.next_frame()
-        if frame3 is not None:
+        if frame3 is None:
+            logger.info("[步骤4/5] 无画面，跳过奖励点击")
+        else:
             dot3 = self._detect_red_dot(frame3, reward_roi)
-            if dot3 is not None:
-                # 点击选区A中心（按钮中心）而非红点质心，避免点歪
+            if dot3 is None:
+                logger.info("[步骤4/5] 奖励按钮无红点，跳过")
+            else:
                 x1, y1, x2, y2 = self._roi_to_pixels(
                     reward_roi, frame3.shape[1], frame3.shape[0])
                 rx, ry = (x1 + x2) // 2, (y1 + y2) // 2
-                logger.info(f"Reward red dot detected, tapping button centre at ({rx}, {ry})")
+                logger.info(f"[步骤4/5] 点击奖励按钮中心 ({rx}, {ry})")
                 self.click(rx, ry)
-                self.sleep(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+        self.sleep(step_sleep)
 
-        # 8. 点击关闭按钮（选区B）回到主界面
+        # 5. 选区B：点击关闭按钮回主页（不管前面是否点击，最后都关闭）
         close_roi = self.config.get(
             "close_button_roi", DEFAULT_CONFIG["close_button_roi"])
         frame4 = self.next_frame()
-        if frame4 is not None:
+        if frame4 is None:
+            logger.info("[步骤5/5] 无画面，跳过关闭按钮")
+        else:
             x1, y1, x2, y2 = self._roi_to_pixels(
                 close_roi, frame4.shape[1], frame4.shape[0])
             close_x = (x1 + x2) // 2
             close_y = (y1 + y2) // 2
-            logger.info(f"Closing back to home, tapping close button at ({close_x}, {close_y})")
+            logger.info(f"[步骤5/5] 点击关闭按钮回主页 ({close_x}, {close_y})")
             self.click(close_x, close_y)
-            self.sleep(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+        self.sleep(step_sleep)
 
+        logger.info("获取好友体力：流程执行完毕")
         return True
 
     # ------------------------------------------------------------------

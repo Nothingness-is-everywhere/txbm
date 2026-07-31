@@ -50,6 +50,54 @@ class StartController(QObject):
             return
         self.handler.post(lambda: self.do_start(task, exit_after))
 
+    def start_onetime_all(self, task_list):
+        """
+        Queue all visible onetime tasks in a OneTimeTaskTab that have the
+        "follow_batch_start" config enabled, in order.
+
+        If the executor is idle, starts it via do_start (which handles device
+        refresh). If already running, just enqueues each task directly.
+        """
+        if not task_list:
+            logger.info("start_onetime_all: empty task list, ignore")
+            return
+        # 仅运行勾选了"是否跟随大开始启动"的可见任务；无此配置的任务默认跟随
+        follow = [t for t in task_list
+                  if getattr(t, 'visible', True)
+                  and t.config.get('follow_batch_start', True)]
+        if not follow:
+            logger.info("start_onetime_all: no tasks opted in (follow_batch_start), ignore")
+            return
+
+        def _do():
+            executor_running = og.executor is not None and not og.executor.paused
+            if executor_running:
+                # Executor is already running: just queue each task
+                for t in follow:
+                    self._mark_task_enabled(t)
+                communicate.starting_emulator.emit(True, None, 0)
+                return True
+            else:
+                # Executor is idle: use do_start with the first task; after
+                # do_start, remaining tasks are queued via the same path.
+                first = follow[0]
+                ok = self.do_start(first, exit_after=False)
+                if ok:
+                    for t in follow[1:]:
+                        self._mark_task_enabled(t)
+                return ok
+
+        if self._is_starting:
+            logger.info("start_onetime_all: already starting, ignore")
+            return
+        self.handler.post(_do)
+
+    def stop_all(self):
+        """Stop the executor, clearing the onetime queue."""
+        if og.executor is not None:
+            og.executor.stop()
+            communicate.starting_emulator.emit(False, None, 0)
+
     def do_start(self, task=None, exit_after=False):
         if self._is_starting:
             logger.info(f"do_start: already starting, ignore. _is_starting={self._is_starting}")

@@ -13,32 +13,58 @@ class OneTimeTaskTab(TaskTab):
         self.group_name = group_name
         self.card_widgets = []
         self.keep_info_when_done = True
-        
+
         # Check if this is an imported script to show delete button
         self.imported_file_name = None
         for fn, imp in og.task_manager.imported_scripts.items():
             if imp['script_name'] == self.group_name:
                 self.imported_file_name = fn
                 break
-                
+
+        # 顶部：批量启动/停止按钮
+        from PySide6.QtWidgets import QHBoxLayout, QSpacerItem, QSizePolicy
+        from qfluentwidgets import PushButton, FluentIcon
+
+        self.top_btn_layout = QHBoxLayout()
+        self.top_btn_layout.setContentsMargins(0, 0, 0, 10)
+        self.top_btn_layout.setSpacing(10)
+
+        self.start_all_btn = PushButton(self.tr('批量启动'), self, FluentIcon.PLAY)
+        self.start_all_btn.setToolTip(self.tr('依次执行本分类下所有可见的周常日常任务'))
+        self.start_all_btn.clicked.connect(self._start_all)
+        self.top_btn_layout.addWidget(self.start_all_btn)
+
+        self.stop_all_btn = PushButton(self.tr('批量停止'), self, FluentIcon.CANCEL)
+        self.stop_all_btn.setToolTip(self.tr('停止执行器并清空任务队列'))
+        self.stop_all_btn.clicked.connect(self._stop_all)
+        self.top_btn_layout.addWidget(self.stop_all_btn)
+
+        self.top_btn_layout.addItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
+
         if self.imported_file_name:
-            from PySide6.QtWidgets import QHBoxLayout, QSpacerItem, QSizePolicy
-            from qfluentwidgets import PushButton, FluentIcon
-            
-            self.btn_layout = QHBoxLayout()
-            self.btn_layout.setContentsMargins(0, 10, 0, 0)
-            self.btn_layout.addItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-            
             self.delete_btn = PushButton(self.tr('Delete Script'), self, FluentIcon.DELETE)
             self.delete_btn.clicked.connect(self.delete_script)
-            self.btn_layout.addWidget(self.delete_btn)
-            
-            # Position it at the end of vBoxLayout
-            self.vBoxLayout.addLayout(self.btn_layout)
-            
+            self.top_btn_layout.addWidget(self.delete_btn)
+
+        # 插入到 vBoxLayout 开头（在 task_info_container 之后，任务卡片之前）
+        # TaskTab 先把 task_info_container（Choose Window）加到 add_widget；我们在其后面加
+        # 这里在 vBoxLayout 插入一个新 layout，位于 vBoxLayout 已有内容之后、cards 之前
+        insert_index = self.vBoxLayout.indexOf(self.task_info_container) + 1
+        if insert_index <= 0:
+            insert_index = self.vBoxLayout.count()
+        self.vBoxLayout.insertLayout(insert_index, self.top_btn_layout)
+
         from ok.gui.Communicate import communicate
         communicate.task_list_updated.connect(self.refresh_ui)
         self.refresh_ui()
+
+    def _start_all(self):
+        if not getattr(self, 'tasks', None):
+            return
+        og.app.start_controller.start_onetime_all(list(self.tasks))
+
+    def _stop_all(self):
+        og.app.start_controller.stop_all()
 
     def delete_script(self):
         from qfluentwidgets import MessageBox
@@ -54,11 +80,7 @@ class OneTimeTaskTab(TaskTab):
             self.removeWidget(w)
             w.deleteLater()
         self.card_widgets.clear()
-        
-        # If we have a delete button, it's at the end. We need to keep it there.
-        if hasattr(self, 'btn_layout'):
-            self.vBoxLayout.removeItem(self.btn_layout)
-        
+
         self.tasks = []
         for task in og.executor.onetime_tasks:
             if not getattr(task, 'visible', True):
@@ -68,14 +90,13 @@ class OneTimeTaskTab(TaskTab):
                 self.tasks.append(task)
             elif self.group_name and task_group == self.group_name:
                 self.tasks.append(task)
-                
+
         for task in self.tasks:
             task_card = TaskCard(task, True)
             self.card_widgets.append(task_card)
-            self.vBoxLayout.addWidget(task_card) # Use vBoxLayout directly to avoid stretch issues
-            
-        if hasattr(self, 'btn_layout'):
-            self.vBoxLayout.addLayout(self.btn_layout)
+            # Use vBoxLayout directly. Cards come after the top_btn_layout
+            # (which is already inserted after task_info_container).
+            self.vBoxLayout.addWidget(task_card)
 
     def in_current_list(self, task):
         return getattr(self, 'tasks', None) and task in self.tasks
