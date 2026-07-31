@@ -140,7 +140,7 @@ class DebugTab(Tab):
         panel_layout.addLayout(toolbar)
 
         self.region_widget = RegionSelectImageWidget()
-        self.region_widget.setMinimumHeight(300)
+        self.region_widget.setMinimumHeight(480)
         self.region_widget.region_selected.connect(self._on_region_selected)
         self.region_widget.mouse_moved.connect(self._on_mouse_moved)
         panel_layout.addWidget(self.region_widget, stretch=1)

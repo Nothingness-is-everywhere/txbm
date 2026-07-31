@@ -47,7 +47,7 @@ class RegionSelectImageWidget(QWidget):
         self._end_pos: QPoint = QPoint()
         self._selection: Optional[QRect] = None
 
-        self.setMinimumSize(200, 150)
+        self.setMinimumSize(640, 480)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
 

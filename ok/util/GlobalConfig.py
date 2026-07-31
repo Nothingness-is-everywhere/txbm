@@ -28,7 +28,7 @@ _basic_options_default = {
     'Auto Resize Game Window': True,
     'Exit App when Game Exits': False,
     'Use DirectML': 'Yes',
-    'Trigger Interval': 1,
+    'Trigger Interval': 1000,
     'Start/Stop': 'F9',
     KILL_LAUNCHER_AFTER_START: True,
     'Launch with DX11': False
