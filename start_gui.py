@@ -29,6 +29,7 @@ config = {
     ],
     "trigger_tasks": [
         ["ok_tasks.NetworkErrorHandler", "NetworkErrorHandler"],
+        ["ok_tasks.HomeRedDotTask", "HomeRedDotTask"],
     ],
     "auto_start_on_gui": True,
 }

@@ -265,23 +265,10 @@ class DebugTab(Tab):
 
     def _copy_selection_info(self):
         """Copy selection info to clipboard."""
-        if self._last_selection_info is None:
+        text = self.result_edit.toPlainText()
+        if not text:
             alert_info(self.tr("No selection to copy"))
             return
-
-        info = self._last_selection_info
-        text = self.tr(
-            "x={x}, y={y}, w={w}, h={h}\n"
-            "x1={x1}, y1={y1}, x2={x2}, y2={y2}\n"
-            "rx={rx:.4f}, ry={ry:.4f}, rw={rw:.4f}, rh={rh:.4f}\n"
-            "center: ({cx}, {cy}) ratio: ({crx:.4f}, {cry:.4f})"
-        ).format(
-            x=info['x'], y=info['y'], w=info['w'], h=info['h'],
-            x1=info['x1'], y1=info['y1'], x2=info['x2'], y2=info['y2'],
-            rx=info['rx'], ry=info['ry'], rw=info['rw'], rh=info['rh'],
-            cx=info['center_x'], cy=info['center_y'],
-            crx=info['center_rx'], cry=info['center_ry']
-        )
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(text)
         alert_info(self.tr("Copied to clipboard"))
