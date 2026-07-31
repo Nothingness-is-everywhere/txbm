@@ -19,3 +19,5 @@ setuptools
 get-pypi-latest-version
 OpenCC==1.2.0
 wheel
+rapidocr>=3.0.0
+onnxruntime>=1.18.0

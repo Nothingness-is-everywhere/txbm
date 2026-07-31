@@ -61,7 +61,7 @@ class TaskExecutor:
         self.pause_end_time = time.time()
         self._last_frame_time = 0
         self.paused = True
-        self.config = config
+        self.config = config if config is not None else {}
         self.scene = None
         from ok.gui.common.config import cfg
         self.locale = cfg.get(cfg.language).value
@@ -137,12 +137,9 @@ class TaskExecutor:
         return self._ocr_lib[name]
 
     def init_default_ocr(self):
-        ocr_config = self.config.get('ocr')
-        if not ocr_config:
-            return
-        default_ocr = ocr_config.get('default')
-        if not default_ocr or not default_ocr.get('lib'):
-            return
+        # Always pre-initialize the default OCR lib. When no explicit OCR
+        # config is provided, _create_ocr_lib falls back to rapidocr, so OCR
+        # is enabled by default without requiring any configuration.
         self._ocr_init_thread = threading.Thread(target=self._init_default_ocr, name="DefaultOCRInit", daemon=True)
         self._ocr_init_thread.start()
 
@@ -156,8 +153,14 @@ class TaskExecutor:
             logger.error(f'init default ocr error, cost: {time.time() - start:.2f}s', e)
 
     def _create_ocr_lib(self, name):
-        ocr_config = self.config.get('ocr').get(name)
-        lib = ocr_config.get('lib')
+        ocr_root = self.config.get('ocr')
+        ocr_config = ocr_root.get(name) if isinstance(ocr_root, dict) else None
+        if not ocr_config or not isinstance(ocr_config, dict):
+            # No OCR config provided for this name; fall back to rapidocr so
+            # OCR works out of the box without explicit configuration.
+            logger.info(f'no ocr config for "{name}", using default rapidocr')
+            ocr_config = {'lib': 'rapidocr'}
+        lib = ocr_config.get('lib', 'rapidocr')
         to_download = ocr_config.get('download_models')
         if to_download:
             models = self.config.get('download_models').get(to_download)

@@ -819,7 +819,10 @@ class OCR(FindFeature):
             return sort_boxes(detected_boxes)
 
     def ocr_fun(self, lib):
-        ocr_config = self.executor.config.get('ocr')
+        executor_config = self.executor.config
+        if not executor_config or not isinstance(executor_config, dict):
+            return self.rapid_ocr
+        ocr_config = executor_config.get('ocr')
         if not ocr_config or not isinstance(ocr_config, dict):
             return self.rapid_ocr
         lib_config = ocr_config.get(lib)
@@ -856,7 +859,10 @@ class OCR(FindFeature):
         return match
 
     def fix_texts(self, detected_boxes):
-        ocr_config = self.executor.config.get('ocr', {})
+        executor_config = self.executor.config
+        if not executor_config or not isinstance(executor_config, dict):
+            return detected_boxes
+        ocr_config = executor_config.get('ocr', {})
 
         auto_simplify = False
         if isinstance(ocr_config, dict):
