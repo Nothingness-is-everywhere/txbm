@@ -521,7 +521,7 @@ class TaskExecutor:
         return len([x for x in self.trigger_tasks if x.enabled])
 
     def trigger_sleep(self):
-        if interval := self.basic_options.get('Trigger Interval', 1000):
+        if interval := self.basic_options.get('Trigger Interval', 3000):
             self.sleep(interval / 1000)
 
     def next_trigger_delay(self, default=1.0):

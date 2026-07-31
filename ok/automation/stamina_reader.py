@@ -39,16 +39,16 @@ logger = logging.getLogger("stamina_reader")
 
 STAMINA_ROI_CONFIG = {
     "expedition": {
-        "x_start": 0.738,
-        "x_end": 0.850,
-        "y_start": 0.728,
-        "y_end": 0.762,
+        "x_start": 0.7065,
+        "x_end": 0.7861,
+        "y_start": 0.7432,
+        "y_end": 0.7646,
     },
     "training": {
-        "x_start": 0.800,
-        "x_end": 0.920,
-        "y_start": 0.822,
-        "y_end": 0.862,
+        "x_start": 0.7981,
+        "x_end": 0.8925,
+        "y_start": 0.8396,
+        "y_end": 0.8630,
     },
 }
 

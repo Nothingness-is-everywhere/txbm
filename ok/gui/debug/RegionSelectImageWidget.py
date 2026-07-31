@@ -96,6 +96,10 @@ class RegionSelectImageWidget(QWidget):
         """Scale the pixmap to fit the widget while maintaining aspect ratio."""
         if self._pixmap is None:
             return
+        # Widget has no valid size yet (e.g. before being shown in a dialog);
+        # skip until resizeEvent fires with a real geometry to avoid divide-by-zero.
+        if self.width() <= 0 or self.height() <= 0:
+            return
 
         scaled = self._pixmap.scaled(
             self.size(),
@@ -107,7 +111,7 @@ class RegionSelectImageWidget(QWidget):
         self._offset_x = (self.width() - scaled.width()) // 2
         self._offset_y = (self.height() - scaled.height()) // 2
 
-        if self._pixmap.width() > 0 and self._pixmap.height() > 0:
+        if scaled.width() > 0 and scaled.height() > 0:
             self._scale_x = float(self._pixmap.width()) / float(scaled.width())
             self._scale_y = float(self._pixmap.height()) / float(scaled.height())
 
