@@ -37,8 +37,8 @@ DEFAULT_CONFIG = {
     # 第 2 步固定点击区域（个人信息入口）
     "profile_click_roi": list(_PROFILE_ROI),
     # 第 3 步固定点击区域（第二个入口）
-    # Selection: x=404,y=270,w=276,h=99 (rx=0.3741, ry=0.1406, rw=0.2556, rh=0.0516)
-    "followup_click_roi": [0.3741, 0.1406, 0.6297, 0.1922],
+    # Selection: x=133,y=692,w=92,h=96 (rx=0.1231, ry=0.3604, rw=0.0852, rh=0.0500)
+    "followup_click_roi": [0.1231, 0.3604, 0.2083, 0.4104],
     # 第 4 步固定点击区域（奖励按钮）
     # Selection: x=597,y=1591,w=306,h=99 (rx=0.5528, ry=0.8286, rw=0.2833, rh=0.0500)
     "reward_click_roi": [0.5528, 0.8286, 0.8361, 0.8786],
