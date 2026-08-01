@@ -146,10 +146,14 @@ class StartController(QObject):
                 if enable_task and enable_task not in tasks_to_enable:
                     tasks_to_enable.append(enable_task)
 
-            for start_task in og.executor.get_all_tasks():
-                if getattr(start_task, 'enable_after_start', False):
-                    logger.info(f"enable_after_start task {start_task}")
-                    add_task_to_enable(start_task)
+            # 单独启动声明了 standalone_start 的任务时，不连带启用 enable_after_start
+            # 任务（如 GameStartupTask），保持该任务单独执行；全局启动/批量启动仍照常
+            standalone = task is not None and getattr(task, 'standalone_start', False)
+            if not standalone:
+                for start_task in og.executor.get_all_tasks():
+                    if getattr(start_task, 'enable_after_start', False):
+                        logger.info(f"enable_after_start task {start_task}")
+                        add_task_to_enable(start_task)
 
             if task:
                 add_task_to_enable(task)
