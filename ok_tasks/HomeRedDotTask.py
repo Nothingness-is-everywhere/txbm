@@ -15,6 +15,8 @@ import cv2
 import numpy as np
 from ok.task.task import BaseTask
 
+from ok_tasks._red_dot import detect_red_dot, roi_center, roi_to_pixels
+
 logger = logging.getLogger("HomeRedDotTask")
 
 
@@ -121,25 +123,25 @@ class HomeRedDotTask(BaseTask):
         h, w = frame.shape[:2]
 
         # 2. 点击个人信息入口固定位置
-        p_x, p_y = self._roi_center(self.config.get("profile_click_roi", DEFAULT_CONFIG["profile_click_roi"]), w, h)
+        p_x, p_y = roi_center(self.config.get("profile_click_roi", DEFAULT_CONFIG["profile_click_roi"]), w, h)
         logger.info(f"[步骤2/5] 点击个人信息入口固定位置 ({p_x}, {p_y})")
         self.click(p_x, p_y)
         self.sleep(step_sleep)
 
         # 3. 点击第二入口固定位置
-        f_x, f_y = self._roi_center(self.config.get("followup_click_roi", DEFAULT_CONFIG["followup_click_roi"]), w, h)
+        f_x, f_y = roi_center(self.config.get("followup_click_roi", DEFAULT_CONFIG["followup_click_roi"]), w, h)
         logger.info(f"[步骤3/5] 点击第二入口固定位置 ({f_x}, {f_y})")
         self.click(f_x, f_y)
         self.sleep(step_sleep)
 
         # 4. 点击奖励按钮固定位置
-        r_x, r_y = self._roi_center(self.config.get("reward_click_roi", DEFAULT_CONFIG["reward_click_roi"]), w, h)
+        r_x, r_y = roi_center(self.config.get("reward_click_roi", DEFAULT_CONFIG["reward_click_roi"]), w, h)
         logger.info(f"[步骤4/5] 点击奖励按钮固定位置 ({r_x}, {r_y})")
         self.click(r_x, r_y)
         self.sleep(step_sleep)
 
         # 5. 点击关闭按钮固定位置
-        c_x, c_y = self._roi_center(
+        c_x, c_y = roi_center(
             self.config.get("close_button_click_roi", DEFAULT_CONFIG["close_button_click_roi"]), w, h)
         logger.info(f"[步骤5/5] 点击关闭按钮固定位置 ({c_x}, {c_y})")
         self.click(c_x, c_y)
@@ -168,7 +170,7 @@ class HomeRedDotTask(BaseTask):
             return False
         roi = self.config.get("home_template_roi", DEFAULT_CONFIG["home_template_roi"])
         h, w = frame.shape[:2]
-        x1, y1, x2, y2 = self._roi_to_pixels(roi, w, h)
+        x1, y1, x2, y2 = roi_to_pixels(roi, w, h)
         region = frame[y1:y2, x1:x2]
         if region.size == 0:
             return False
@@ -187,83 +189,4 @@ class HomeRedDotTask(BaseTask):
     def _detect_red_dot(self, frame: np.ndarray, roi=None) -> Optional[Tuple[int, int]]:
         if roi is None:
             roi = self.config.get("red_dot_roi", DEFAULT_CONFIG["red_dot_roi"])
-        h, w = frame.shape[:2]
-        x1, y1, x2, y2 = self._roi_to_pixels(roi, w, h)
-        region = frame[y1:y2, x1:x2]
-        if region.size == 0:
-            return None
-
-        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-        lower1 = np.array(self.config.get("hsv_lower1", DEFAULT_CONFIG["hsv_lower1"]))
-        upper1 = np.array(self.config.get("hsv_upper1", DEFAULT_CONFIG["hsv_upper1"]))
-        lower2 = np.array(self.config.get("hsv_lower2", DEFAULT_CONFIG["hsv_lower2"]))
-        upper2 = np.array(self.config.get("hsv_upper2", DEFAULT_CONFIG["hsv_upper2"]))
-        mask = cv2.bitwise_or(cv2.inRange(hsv, lower1, upper1), cv2.inRange(hsv, lower2, upper2))
-
-        ksize = self.config.get("morph_open_size", DEFAULT_CONFIG["morph_open_size"])
-        if ksize > 0:
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-
-        pixels = int(cv2.countNonZero(mask))
-        if pixels < self.config.get("min_red_pixels", DEFAULT_CONFIG["min_red_pixels"]):
-            return None
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        min_area = float(self.config.get("min_component_area", DEFAULT_CONFIG["min_component_area"]))
-        max_area = float(self.config.get("max_component_area", DEFAULT_CONFIG["max_component_area"]))
-        max_aspect = float(self.config.get("max_component_aspect", DEFAULT_CONFIG["max_component_aspect"]))
-        min_circularity = float(self.config.get(
-            "min_component_circularity", DEFAULT_CONFIG["min_component_circularity"]))
-        min_fill = float(self.config.get("min_component_fill_ratio", DEFAULT_CONFIG["min_component_fill_ratio"]))
-
-        best = None
-        best_score = -1.0
-        for cnt in contours:
-            area = float(cv2.contourArea(cnt))
-            if area < min_area or area > max_area:
-                continue
-
-            bx, by, bw, bh = cv2.boundingRect(cnt)
-            if bw <= 0 or bh <= 0:
-                continue
-            aspect = (bw / float(bh)) if bw >= bh else (bh / float(bw))
-            if aspect > max_aspect:
-                continue
-
-            perimeter = float(cv2.arcLength(cnt, True))
-            if perimeter <= 0:
-                continue
-            circularity = float(4.0 * np.pi * area / (perimeter * perimeter))
-            if circularity < min_circularity:
-                continue
-
-            fill_ratio = area / float(bw * bh)
-            if fill_ratio < min_fill:
-                continue
-
-            m = cv2.moments(cnt)
-            if m["m00"] == 0:
-                continue
-
-            score = area * circularity
-            if score > best_score:
-                best_score = score
-                cx = int(m["m10"] / m["m00"]) + x1
-                cy = int(m["m01"] / m["m00"]) + y1
-                best = (cx, cy)
-
-        return best
-
-    @staticmethod
-    def _roi_to_pixels(roi, w, h) -> Tuple[int, int, int, int]:
-        x1 = max(0, int(w * roi[0]))
-        y1 = max(0, int(h * roi[1]))
-        x2 = min(w, int(w * roi[2]))
-        y2 = min(h, int(h * roi[3]))
-        return x1, y1, x2, y2
-
-    @classmethod
-    def _roi_center(cls, roi, w, h) -> Tuple[int, int]:
-        x1, y1, x2, y2 = cls._roi_to_pixels(roi, w, h)
-        return (x1 + x2) // 2, (y1 + y2) // 2
+        return detect_red_dot(frame, roi, self.config, DEFAULT_CONFIG)

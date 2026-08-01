@@ -27,6 +27,7 @@ config = {
     "onetime_tasks": [
         ["ok.automation.game_startup_task", "GameStartupTask"],
         ["ok_tasks.HomeRedDotTask", "HomeRedDotTask"],
+        ["ok_tasks.AlchemyDispatchTask", "AlchemyDispatchTask"],
     ],
     "trigger_tasks": [
         ["ok_tasks.NetworkErrorHandler", "NetworkErrorHandler"],
