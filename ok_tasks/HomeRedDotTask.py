@@ -88,6 +88,8 @@ class HomeRedDotTask(BaseTask):
                             if not k.startswith('_') and k != 'follow_batch_start'}
         self.config_description = {"follow_batch_start": "是否跟随大开始启动"}
         self.enable_after_start = False
+        # 单独启动本任务时不连带启用 enable_after_start 任务（如 GameStartupTask），保持单独执行
+        self.standalone_start = True
         self._home_tpl: Optional[np.ndarray] = None
 
     def on_create(self):
