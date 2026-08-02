@@ -28,6 +28,7 @@ config = {
         ["ok.automation.game_startup_task", "GameStartupTask"],
         ["ok_tasks.HomeRedDotTask", "HomeRedDotTask"],
         ["ok_tasks.AlchemyDispatchTask", "AlchemyDispatchTask"],
+        ["ok_tasks.RecruitTask", "RecruitTask"],
     ],
     "trigger_tasks": [
         ["ok_tasks.NetworkErrorHandler", "NetworkErrorHandler"],

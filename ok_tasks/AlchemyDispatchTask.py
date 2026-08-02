@@ -306,7 +306,7 @@ class AlchemyDispatchTask(BaseTask):
         frame = self.executor.frame
         if frame is None:
             frame = self.next_frame()
-        if frame is None:
+        if frame is None or  not self._is_home(frame):
             logger.warning("炼金和派遣：无画面可用，终止")
             return False
 
