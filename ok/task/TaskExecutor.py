@@ -88,6 +88,7 @@ class TaskExecutor:
         self.trigger_tasks = []
         self.onetime_tasks = []
         self.onetime_task_queue = []
+        self.trigger_fire_once_queue = []  # 一次性触发的 trigger_task 队列（如 GameStartupTask）
         self.thread = None
         self.lock = threading.Lock()
         self._wake_condition = threading.Condition()
@@ -461,23 +462,34 @@ class TaskExecutor:
             self.scene.reset()
 
     def enqueue_onetime_task(self, task):
-        if task not in self.onetime_tasks:
+        if task in self.onetime_tasks:
+            with self.lock:
+                if task not in self.onetime_task_queue:
+                    self.onetime_task_queue.append(task)
+                    logger.info(f'queued onetime_task {task.name}')
             self._wake_executor()
-            return False
-        with self.lock:
-            if task not in self.onetime_task_queue:
-                self.onetime_task_queue.append(task)
-                logger.info(f'queued onetime_task {task.name}')
+            return True
+        # 普通 TriggerTask（非 ManagedTriggerTask）走一次性触发队列
+        # （如 GameStartupTask 靠 enable_after_start 启动时执行一次）
+        from ok.trigger.base import ManagedTriggerTask
+        if task in self.trigger_tasks and not isinstance(task, ManagedTriggerTask):
+            with self.lock:
+                if task not in self.trigger_fire_once_queue:
+                    self.trigger_fire_once_queue.append(task)
+                    logger.info(f'queued fire_once trigger_task {task.name}')
+            self._wake_executor()
+            return True
         self._wake_executor()
-        return True
+        return False
 
     def remove_onetime_task(self, task):
-        if task not in self.onetime_tasks:
-            return False
         removed = False
         with self.lock:
             while task in self.onetime_task_queue:
                 self.onetime_task_queue.remove(task)
+                removed = True
+            while task in self.trigger_fire_once_queue:
+                self.trigger_fire_once_queue.remove(task)
                 removed = True
         if removed:
             self._wake_executor()
@@ -508,6 +520,11 @@ class TaskExecutor:
                 if onetime_task.enabled:
                     logger.info(f'get queued onetime_task {onetime_task.name}')
                     return onetime_task, True, False
+            while self.trigger_fire_once_queue:
+                fire_once = self.trigger_fire_once_queue.pop(0)
+                if fire_once.enabled:
+                    logger.info(f'get fire_once trigger_task {fire_once.name}')
+                    return fire_once, True, False  # is_trigger_task=False → onetime 路径，run 后 disable()
         for onetime_task in self.onetime_tasks:
             if onetime_task.enabled:
                 logger.info(f'get one enabled onetime_task {onetime_task.name}')
@@ -677,6 +694,7 @@ class TaskExecutor:
         for task in self.trigger_tasks:
             task.on_destroy()
         self.trigger_tasks = []
+        self.trigger_fire_once_queue = []
         if self.interaction:
             self.interaction.on_destroy()
 

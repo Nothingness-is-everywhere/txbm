@@ -29,6 +29,7 @@ class TestTaskExecutorQueue(unittest.TestCase):
         executor.current_task = None
         executor.onetime_tasks = tasks
         executor.onetime_task_queue = []
+        executor.trigger_fire_once_queue = []
         executor.trigger_tasks = []
         executor.trigger_task_index = -1
         return executor

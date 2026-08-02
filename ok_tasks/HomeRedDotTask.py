@@ -8,13 +8,12 @@ Home red-dot gated fixed-click task for 天下布魔 (Tianxia Bumo).
 """
 
 import logging
-from pathlib import Path
 from typing import Optional, Tuple
 
-import cv2
 import numpy as np
 from ok.task.task import BaseTask
 
+from ok_tasks._home import is_on_home, load_template_image
 from ok_tasks._red_dot import detect_red_dot, roi_center, roi_to_pixels
 
 logger = logging.getLogger("HomeRedDotTask")
@@ -22,7 +21,6 @@ logger = logging.getLogger("HomeRedDotTask")
 
 # Selection: x=37, y=69, w=279, h=107  (rx=0.0343, ry=0.0359, rw=0.2583, rh=0.0557)
 _PROFILE_ROI = [0.0343, 0.0359, 0.2926, 0.0916]
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_CONFIG = {
     "_enabled": True,
@@ -95,7 +93,9 @@ class HomeRedDotTask(BaseTask):
         self._home_tpl: Optional[np.ndarray] = None
 
     def on_create(self):
-        self._enabled = self.config.get("_enabled", True)
+        # 永不自动启动；用户必须点"批量启动"或单个"Start"按钮才会执行。
+        # 忽略 config 中可能残留的 _enabled=True（旧版本持久化的值）。
+        self._enabled = False
         self.follow_batch_start = self.config.get("follow_batch_start", True)
         self._load_template()
 
@@ -159,39 +159,17 @@ class HomeRedDotTask(BaseTask):
 
     def _load_template(self):
         rel = self.config.get("home_template_path", DEFAULT_CONFIG["home_template_path"])
-        p = Path(rel)
-        abs_path = str(p if p.is_absolute() else (_PROJECT_ROOT / p))
-        try:
-            tpl = cv2.imdecode(np.fromfile(abs_path, dtype=np.uint8), cv2.IMREAD_COLOR)
-        except Exception as e:
-            logger.warning(f"Failed to read home template: {abs_path} ({e})")
-            tpl = None
+        tpl = load_template_image(rel)
         if tpl is None:
-            logger.warning(f"Home template not found, home detection disabled: {abs_path}")
-            self._home_tpl = None
-        else:
-            self._home_tpl = tpl
+            logger.warning(f"Home template not found, home detection disabled: {rel}")
+        self._home_tpl = tpl
 
     def _is_home(self, frame: np.ndarray) -> bool:
         if self._home_tpl is None:
             return False
         roi = self.config.get("home_template_roi", DEFAULT_CONFIG["home_template_roi"])
-        h, w = frame.shape[:2]
-        x1, y1, x2, y2 = roi_to_pixels(roi, w, h)
-        region = frame[y1:y2, x1:x2]
-        if region.size == 0:
-            return False
-
-        region_gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        tpl_gray = cv2.cvtColor(self._home_tpl, cv2.COLOR_BGR2GRAY)
-        th, tw = tpl_gray.shape[:2]
-        if region_gray.shape[0] < th or region_gray.shape[1] < tw:
-            return False
-
-        res = cv2.matchTemplate(region_gray, tpl_gray, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(res)
-        threshold = self.config.get("home_threshold", DEFAULT_CONFIG["home_threshold"])
-        return max_val >= threshold
+        threshold = float(self.config.get("home_threshold", DEFAULT_CONFIG["home_threshold"]))
+        return is_on_home(frame, self._home_tpl, roi, threshold)
 
     def _ensure_home(self, click_roi) -> bool:
         """点击关闭/返回按钮后校验是否回到主页；未回主页则按 click_roi 补点几次。"""

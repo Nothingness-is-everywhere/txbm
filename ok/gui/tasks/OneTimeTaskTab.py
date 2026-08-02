@@ -12,7 +12,6 @@ class OneTimeTaskTab(TaskTab):
         self.is_standalone = is_standalone
         self.group_name = group_name
         self.card_widgets = []
-        self.keep_info_when_done = True
 
         # Check if this is an imported script to show delete button
         self.imported_file_name = None
@@ -46,13 +45,8 @@ class OneTimeTaskTab(TaskTab):
             self.delete_btn.clicked.connect(self.delete_script)
             self.top_btn_layout.addWidget(self.delete_btn)
 
-        # 插入到 vBoxLayout 开头（在 task_info_container 之后，任务卡片之前）
-        # TaskTab 先把 task_info_container（Choose Window）加到 add_widget；我们在其后面加
-        # 这里在 vBoxLayout 插入一个新 layout，位于 vBoxLayout 已有内容之后、cards 之前
-        insert_index = self.vBoxLayout.indexOf(self.task_info_container) + 1
-        if insert_index <= 0:
-            insert_index = self.vBoxLayout.count()
-        self.vBoxLayout.insertLayout(insert_index, self.top_btn_layout)
+        # 批量启动按钮插到 vBoxLayout 开头（任务卡片之前）
+        self.vBoxLayout.insertLayout(0, self.top_btn_layout)
 
         from ok.gui.Communicate import communicate
         communicate.task_list_updated.connect(self.refresh_ui)
@@ -94,8 +88,7 @@ class OneTimeTaskTab(TaskTab):
         for task in self.tasks:
             task_card = TaskCard(task, True)
             self.card_widgets.append(task_card)
-            # Use vBoxLayout directly. Cards come after the top_btn_layout
-            # (which is already inserted after task_info_container).
+            # Use vBoxLayout directly. Cards come after the top_btn_layout.
             self.vBoxLayout.addWidget(task_card)
 
     def in_current_list(self, task):

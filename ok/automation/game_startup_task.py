@@ -24,7 +24,7 @@ import logging
 
 import numpy as np
 
-from ok.task.task import BaseTask
+from ok.task.task import TriggerTask
 
 logger = logging.getLogger("GameStartupTask")
 
@@ -34,7 +34,7 @@ DEFAULT_MAX_WAIT = 20
 DEFAULT_POLL_INTERVAL = 0.5
 
 
-class GameStartupTask(BaseTask):
+class GameStartupTask(TriggerTask):
     """
     Task that runs the full game startup sequence:
       - Close notice popup
@@ -48,10 +48,7 @@ class GameStartupTask(BaseTask):
         self.name = "GameStartup"
         self.description = "自动处理游戏启动弹窗（公告、签到）并读取体力"
         self.enable_after_start = True
-        self.visible = True  # Show in the 周常日常 tab
-
-    def on_create(self):
-        self._enabled = True
+        self.visible = True  # 显示在"触发器"tab（启动时自动执行一次）
 
     def _get_config_value(self, env_key: str, default: float) -> float:
         """Read config value from environment variable."""
@@ -225,6 +222,11 @@ class GameStartupTask(BaseTask):
         logger.warning(f"Game readiness timeout after {max_wait}s, proceeding conservatively (no blind clicks)")
         return False
 
+    def should_trigger(self):
+        # one-shot 任务，靠 enable_after_start + fire_once 队列触发；
+        # 永不应被 managed scheduler 或 legacy round-robin 自动拾取。
+        return False
+
     def run(self):
         """
         Execute the full startup sequence with state-driven waiting:
@@ -269,30 +271,23 @@ class GameStartupTask(BaseTask):
     def _is_already_home(self) -> bool:
         """Check if already on the home screen (skip startup if so)."""
         try:
-            import cv2
-            from pathlib import Path
+            from ok_tasks._home import (
+                DEFAULT_HOME_ROI,
+                DEFAULT_HOME_TEMPLATE_PATH,
+                DEFAULT_HOME_THRESHOLD,
+                is_on_home,
+                load_template_image,
+            )
             frame = self.executor.frame
             if frame is None:
                 frame = self.next_frame()
             if frame is None:
                 return False
-            tpl_path = Path(__file__).resolve().parent.parent.parent / "templates" / "home_profile_button.png"
-            if not tpl_path.exists():
-                return False
-            tpl = cv2.imdecode(np.fromfile(str(tpl_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+            tpl = load_template_image(DEFAULT_HOME_TEMPLATE_PATH)
             if tpl is None:
                 return False
-            roi = [0.0343, 0.0359, 0.2926, 0.0916]
-            h, w = frame.shape[:2]
-            x1, y1 = int(w * roi[0]), int(h * roi[1])
-            x2, y2 = int(w * roi[2]), int(h * roi[3])
-            region = frame[y1:y2, x1:x2]
-            res = cv2.matchTemplate(cv2.cvtColor(region, cv2.COLOR_BGR2GRAY),
-                                    cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY),
-                                    cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res)
-            if max_val >= 0.70:
-                logger.info(f"Already on home screen (conf={max_val:.3f})")
+            if is_on_home(frame, tpl, DEFAULT_HOME_ROI, DEFAULT_HOME_THRESHOLD):
+                logger.info("Already on home screen")
                 return True
             return False
         except Exception as e:

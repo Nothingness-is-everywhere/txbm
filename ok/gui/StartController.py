@@ -78,8 +78,13 @@ class StartController(QObject):
                 communicate.starting_emulator.emit(True, None, 0)
                 return True
             else:
-                # Executor is idle: use do_start with the first task; after
-                # do_start, remaining tasks are queued via the same path.
+                # Executor is idle: batch daily tasks assume the game is
+                # already on the home screen. If not on home, abort early
+                # instead of running tasks that depend on the main screen.
+                if not self._check_home_before_batch():
+                    return False
+                # Use do_start with the first task; after do_start, remaining
+                # tasks are queued via the same path.
                 first = follow[0]
                 ok = self.do_start(first, exit_after=False)
                 if ok:
@@ -97,6 +102,59 @@ class StartController(QObject):
         if og.executor is not None:
             og.executor.stop()
             communicate.starting_emulator.emit(False, None, 0)
+
+    def _get_home_template(self):
+        """Lazy-load and cache the home-screen template (None if missing).
+
+        复用 ok_tasks._home 的共享加载逻辑（处理 Windows 中文路径）。
+        """
+        cache = getattr(self, '_home_template_cache', None)
+        if cache is not None:
+            return cache
+        try:
+            from ok_tasks._home import DEFAULT_HOME_TEMPLATE_PATH, load_template_image
+            self._home_template_cache = load_template_image(DEFAULT_HOME_TEMPLATE_PATH)
+        except Exception as e:
+            logger.warning(f"failed to load home template: {e}")
+            self._home_template_cache = None
+        return self._home_template_cache
+
+    def _check_home_before_batch(self) -> bool:
+        """
+        批量启动日常任务前检查是否在主页；不在则返回 False。
+
+        日常任务（HomeRedDot / AlchemyDispatch / Recruit 等）默认假设游戏已在
+        主界面。若不在主页则直接结束，避免无效执行；模板缺失或检测异常时不
+        阻塞（交给 do_start 正常处理）。
+        """
+        try:
+            og.device_manager.do_refresh(True)
+            capture = getattr(og.device_manager, 'capture_method', None)
+            frame = capture.get_frame() if capture is not None else None
+            if frame is None:
+                logger.info("batch start: no frame, not on home, abort")
+                communicate.starting_emulator.emit(
+                    True, self.tr('Not on home screen, batch start aborted'), 0)
+                return False
+            tpl = self._get_home_template()
+            if tpl is None:
+                logger.warning("batch start: home template missing, skip home check")
+                return True
+            from ok_tasks._home import (
+                DEFAULT_HOME_ROI,
+                DEFAULT_HOME_THRESHOLD,
+                is_on_home,
+            )
+            if not is_on_home(frame, tpl, DEFAULT_HOME_ROI, DEFAULT_HOME_THRESHOLD):
+                logger.info("batch start: not on home screen, abort")
+                communicate.starting_emulator.emit(
+                    True, self.tr('Not on home screen, batch start aborted'), 0)
+                return False
+            logger.info("batch start: on home screen, proceed")
+            return True
+        except Exception as e:
+            logger.error(f"_check_home_before_batch exception: {e}", e)
+            return True
 
     def do_start(self, task=None, exit_after=False):
         if self._is_starting:

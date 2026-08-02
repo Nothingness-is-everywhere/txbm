@@ -15,23 +15,20 @@
   11. 点击与炼金相同的返回按钮位置回到主界面。
 
 红点检测复用 ok_tasks._red_dot 中的共享实现（与 HomeRedDotTask 同一套方法）。
-模板匹配复用 cv2.matchTemplate（与 HomeRedDotTask._is_home 同一套技术）。
+主页检测 / 模板匹配复用 ok_tasks._home 中的共享实现（is_on_home / match_template_in_roi）。
 """
 
 import logging
-from pathlib import Path
 from typing import Optional, Tuple
 
-import cv2
 import numpy as np
 
 from ok.task.task import BaseTask
 
-from ok_tasks._red_dot import detect_red_dot, roi_center, roi_to_pixels
+from ok_tasks._home import is_on_home, load_template_image, match_template_in_roi
+from ok_tasks._red_dot import detect_red_dot, roi_center
 
 logger = logging.getLogger("AlchemyDispatchTask")
-
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 # 选区信息: x=0, y=877, w=96, h=131  (图片尺寸 1080x1920)
@@ -175,7 +172,9 @@ class AlchemyDispatchTask(BaseTask):
         self._home_tpl: Optional[np.ndarray] = None
 
     def on_create(self):
-        self._enabled = self.config.get("_enabled", True)
+        # 永不自动启动；用户必须点"批量启动"或单个"Start"按钮才会执行。
+        # 忽略 config 中可能残留的 _enabled=True（旧版本持久化的值）。
+        self._enabled = False
         self.follow_batch_start = self.config.get("follow_batch_start", True)
         self._load_step4_template()
         self._load_dispatch_template()
@@ -184,43 +183,25 @@ class AlchemyDispatchTask(BaseTask):
     def _load_step4_template(self):
         """加载步骤4保存按钮模板文件到内存。"""
         rel = self.config.get("step4_template_path", DEFAULT_CONFIG["step4_template_path"])
-        p = Path(rel)
-        abs_path = p if p.is_absolute() else (_PROJECT_ROOT / p)
-        try:
-            tpl = cv2.imdecode(np.fromfile(str(abs_path), dtype=np.uint8), cv2.IMREAD_COLOR)
-        except Exception as e:
-            logger.warning(f"炼金和派遣：读取步骤4模板失败: {abs_path} ({e})")
-            tpl = None
+        tpl = load_template_image(rel)
         if tpl is None:
-            logger.warning(f"炼金和派遣：步骤4模板未找到，步骤4将无法匹配: {abs_path}")
+            logger.warning(f"炼金和派遣：步骤4模板未找到，步骤4将无法匹配: {rel}")
         self._step4_tpl = tpl
 
     def _load_dispatch_template(self):
         """加载派遣入口模板文件到内存（使用项目已有 templates/dispatch_entry.png）。"""
         rel = self.config.get("dispatch_entry_template_path", DEFAULT_CONFIG["dispatch_entry_template_path"])
-        p = Path(rel)
-        abs_path = p if p.is_absolute() else (_PROJECT_ROOT / p)
-        try:
-            tpl = cv2.imdecode(np.fromfile(str(abs_path), dtype=np.uint8), cv2.IMREAD_COLOR)
-        except Exception as e:
-            logger.warning(f"派遣：读取入口模板失败: {abs_path} ({e})")
-            tpl = None
+        tpl = load_template_image(rel)
         if tpl is None:
-            logger.warning(f"派遣：入口模板未找到，步骤7将无法匹配: {abs_path}")
+            logger.warning(f"派遣：入口模板未找到，步骤7将无法匹配: {rel}")
         self._dispatch_tpl = tpl
 
     def _load_home_template(self):
         """加载主页模板文件到内存（返回主界面校验用）。"""
         rel = self.config.get("home_template_path", DEFAULT_CONFIG["home_template_path"])
-        p = Path(rel)
-        abs_path = p if p.is_absolute() else (_PROJECT_ROOT / p)
-        try:
-            tpl = cv2.imdecode(np.fromfile(str(abs_path), dtype=np.uint8), cv2.IMREAD_COLOR)
-        except Exception as e:
-            logger.warning(f"炼金和派遣：读取主页模板失败: {abs_path} ({e})")
-            tpl = None
+        tpl = load_template_image(rel)
         if tpl is None:
-            logger.warning(f"炼金和派遣：主页模板未找到，返回主界面校验将跳过: {abs_path}")
+            logger.warning(f"炼金和派遣：主页模板未找到，返回主界面校验将跳过: {rel}")
         self._home_tpl = tpl
 
     def _is_home(self, frame: np.ndarray) -> bool:
@@ -229,8 +210,7 @@ class AlchemyDispatchTask(BaseTask):
             return False
         roi = self.config.get("home_template_roi", DEFAULT_CONFIG["home_template_roi"])
         threshold = float(self.config.get("home_threshold", DEFAULT_CONFIG["home_threshold"]))
-        matched, _ = self._match_template(frame, self._home_tpl, roi, threshold)
-        return matched
+        return is_on_home(frame, self._home_tpl, roi, threshold)
 
     def _ensure_home(self, click_roi, label: str) -> bool:
         """点击返回按钮后校验是否回到主界面；未回主页则按 click_roi 补点几次。
@@ -257,19 +237,7 @@ class AlchemyDispatchTask(BaseTask):
 
     def _match_template(self, frame: np.ndarray, template: np.ndarray, roi, threshold: float) -> Tuple[bool, float]:
         """在 frame 的 roi 区域内匹配 template，返回 (是否匹配, 最高置信度)。"""
-        h, w = frame.shape[:2]
-        x1, y1, x2, y2 = roi_to_pixels(roi, w, h)
-        region = frame[y1:y2, x1:x2]
-        if region.size == 0:
-            return False, 0.0
-        region_gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        tpl_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-        th, tw = tpl_gray.shape[:2]
-        if region_gray.shape[0] < th or region_gray.shape[1] < tw:
-            return False, 0.0
-        res = cv2.matchTemplate(region_gray, tpl_gray, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(res)
-        return float(max_val) >= threshold, float(max_val)
+        return match_template_in_roi(frame, template, roi, threshold)
 
     def _enter_combined_page(self, frame: np.ndarray, label: str, step_sleep: float) -> bool:
         """检测入口红点并点击 》 按钮进入"炼金和派遣"页面。返回是否进入。"""

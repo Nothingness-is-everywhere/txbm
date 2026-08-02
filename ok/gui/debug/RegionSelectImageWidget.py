@@ -249,6 +249,27 @@ class RegionSelectImageWidget(QWidget):
         """Return the current pixmap for reuse (e.g. in a maximized view)."""
         return self._pixmap
 
+    def get_cropped_pixmap(self) -> Optional[QPixmap]:
+        """Return a deep copy of the current selection in original image coordinates.
+
+        Returns None if no image is loaded or no valid selection exists.
+        The returned pixmap is clipped to the image bounds.
+        """
+        if self._pixmap is None or self._selection is None:
+            return None
+        tl = self._widget_to_image(self._selection.topLeft())
+        br = self._widget_to_image(self._selection.bottomRight())
+        if tl is None or br is None:
+            return None
+        x, y = tl.x(), tl.y()
+        x2, y2 = br.x(), br.y()
+        if x2 <= x or y2 <= y:
+            return None
+        rect = QRect(x, y, x2 - x, y2 - y).intersected(self._pixmap.rect())
+        if rect.width() <= 0 or rect.height() <= 0:
+            return None
+        return self._pixmap.copy(rect)
+
     def set_pixmap(self, pixmap: QPixmap):
         """Set image directly from a QPixmap (reuses without conversion)."""
         self._pixmap = pixmap

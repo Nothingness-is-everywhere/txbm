@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 from ctypes import windll, wintypes
@@ -164,6 +165,11 @@ class DebugTab(Tab):
         copy_btn.clicked.connect(self._copy_selection_info)
         result_layout.addWidget(copy_btn)
 
+        save_btn = PushButton(self.tr("Save Selection Image"))
+        save_btn.setToolTip(self.tr("Save the cropped selection image to a file"))
+        save_btn.clicked.connect(self._save_selection_image)
+        result_layout.addWidget(save_btn)
+
         panel_layout.addLayout(result_layout)
 
         self.add_card(self.tr("Screenshot Region Test"), panel_widget, stretch=1)
@@ -272,6 +278,46 @@ class DebugTab(Tab):
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(text)
         alert_info(self.tr("Copied to clipboard"))
+
+    def _save_selection_image(self):
+        """Save the cropped selection image to a file chosen by the user."""
+        cropped = self.region_widget.get_cropped_pixmap()
+        if cropped is None:
+            alert_info(self.tr("No selection to save"))
+            return
+
+        # Default to the configured screenshots folder, fall back to ./screenshots.
+        default_folder = os.path.join(os.getcwd(), "screenshots")
+        try:
+            screenshot = getattr(getattr(og, 'ok', None), 'screenshot', None)
+            if screenshot is not None and getattr(screenshot, 'screenshot_folder', None):
+                default_folder = screenshot.screenshot_folder
+        except Exception as e:
+            logger.warning(f"Failed to resolve screenshot folder: {e}")
+
+        try:
+            os.makedirs(default_folder, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to create screenshot folder: {e}")
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        default_path = os.path.join(default_folder, f"selection_{timestamp}.png")
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, self.tr("Save Selection Image"), default_path,
+            self.tr("PNG Files (*.png);;JPEG Files (*.jpg *.jpeg);;BMP Files (*.bmp)")
+        )
+        if not file_path:
+            return
+
+        try:
+            if cropped.save(file_path):
+                alert_info(self.tr("Selection image saved: {}").format(file_path))
+            else:
+                alert_error(self.tr("Failed to save selection image"))
+        except Exception as e:
+            logger.error(f"Save selection image error: {e}")
+            alert_error(str(e))
 
     def gen_tr(self):
         folder = og.app.gen_tr_po_files()
