@@ -110,6 +110,13 @@ class TaskExecutor:
             communicate.window.connect(self.blur_overlay_processor.set_visible)
         self.init_default_ocr()
 
+        # Unified trigger scheduler (managed mode). Created early so that
+        # ManagedTriggerTask instances can reach it via self.trigger_scheduler
+        # during on_create/post_init. The feature flag is re-read every cycle
+        # for hot rollback (see _managed_trigger_enabled).
+        from ok.trigger.scheduler import TriggerScheduler
+        self.trigger_scheduler = TriggerScheduler()
+
     def load_tr(self):
         locale_name = self.locale.name()
         try:
@@ -505,6 +512,18 @@ class TaskExecutor:
             if onetime_task.enabled:
                 logger.info(f'get one enabled onetime_task {onetime_task.name}')
                 return onetime_task, True, False
+        # --- Managed trigger scheduler path (feature flag, hot-rollback) ---
+        # When enabled, a single scheduler selects the next trigger by priority
+        # + per-trigger/category/global cooldown, replacing the round-robin
+        # loop and its blunt trigger_sleep() that blocked the executor.
+        if self._managed_trigger_enabled():
+            self.trigger_scheduler.refresh(self.trigger_tasks)
+            chosen = self.trigger_scheduler.select(self.trigger_tasks)
+            if chosen is not None:
+                return chosen, False, True
+            return None, False, False
+
+        # --- Legacy round-robin path (rollback) ---
         cycled = False
         for _ in range(len(self.trigger_tasks)):
             if self.trigger_task_index == len(self.trigger_tasks) - 1:
@@ -517,6 +536,18 @@ class TaskExecutor:
                 return task, cycled, True
         return None, cycled, False
 
+    def _managed_trigger_enabled(self) -> bool:
+        """Whether the unified trigger scheduler is active.
+
+        Re-reads the config flag every call so the operator can toggle
+        ``OK_TRIGGER_MANAGED`` / ``configs/trigger_config.json`` at runtime.
+        任何异常都回退到 legacy 路径，保证安全。
+        """
+        try:
+            return bool(self.trigger_scheduler.config.enable_managed_trigger)
+        except Exception:
+            return False
+
     def active_trigger_task_count(self):
         return len([x for x in self.trigger_tasks if x.enabled])
 
@@ -525,6 +556,10 @@ class TaskExecutor:
             self.sleep(interval / 1000)
 
     def next_trigger_delay(self, default=1.0):
+        if self._managed_trigger_enabled() and self.trigger_scheduler.has_managed(self.trigger_tasks):
+            # Managed mode: precise wait until the next trigger's min_interval
+            # elapses, replacing the blunt trigger_sleep() cadence.
+            return self.trigger_scheduler.next_trigger_delay(self.trigger_tasks, default=default)
         now = time.time()
         delays = [
             max(0, task.trigger_interval - (now - task.last_trigger_time))
@@ -631,6 +666,11 @@ class TaskExecutor:
 
     def destroy(self):
         logger.info(f'Executor destroy')
+        try:
+            if getattr(self, 'trigger_scheduler', None) is not None:
+                self.trigger_scheduler.log_summary()
+        except Exception:
+            pass
         for task in self.onetime_tasks:
             task.on_destroy()
         self.onetime_tasks = []

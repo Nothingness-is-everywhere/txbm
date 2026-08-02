@@ -1,0 +1,63 @@
+{
+    "_comment": "Canonical default config for the unified trigger framework. Shipped in the package and tracked in git. Per-deployment overrides may be placed in configs/trigger_config.json (gitignored). See docs/trigger_architecture.md.",
+
+    "enable_managed_trigger": true,
+    "global_min_interval": 1.0,
+    "budget_window_seconds": 60.0,
+    "budget_runs_per_window": 120,
+    "budget_ocr_per_window": 60,
+    "budget_match_per_window": 300,
+    "check_timeout_seconds": 3.0,
+    "handle_timeout_seconds": 8.0,
+    "metrics_log_interval_seconds": 60.0,
+
+    "category_defaults": {
+        "network": {
+            "min_interval": 3.0,
+            "cooldown_seconds": 5.0,
+            "dedup_window_seconds": 8.0,
+            "priority": 80,
+            "trigger_mode": "polling"
+        },
+        "recovery": {
+            "min_interval": 5.0,
+            "cooldown_seconds": 10.0,
+            "dedup_window_seconds": 10.0,
+            "priority": 70,
+            "trigger_mode": "polling"
+        },
+        "ui_popup": {
+            "min_interval": 8.0,
+            "cooldown_seconds": 15.0,
+            "dedup_window_seconds": 15.0,
+            "priority": 50,
+            "trigger_mode": "polling"
+        },
+        "battle_scene": {
+            "min_interval": 5.0,
+            "cooldown_seconds": 8.0,
+            "dedup_window_seconds": 8.0,
+            "priority": 60,
+            "trigger_mode": "hybrid"
+        },
+        "task_flow": {
+            "min_interval": 10.0,
+            "cooldown_seconds": 20.0,
+            "dedup_window_seconds": 20.0,
+            "priority": 40,
+            "trigger_mode": "polling"
+        }
+    },
+
+    "trigger_overrides": {
+        "网络错误处理": {
+            "min_interval": 3.0,
+            "cooldown_seconds": 5.0,
+            "dedup_window_seconds": 8.0,
+            "max_retry": 3,
+            "timeout_seconds": 8.0,
+            "priority": 80,
+            "trigger_mode": "polling"
+        }
+    }
+}
