@@ -47,6 +47,8 @@ DEFAULT_CONFIG = {
     "close_button_click_roi": [0.4435, 0.9229, 0.5555, 0.9844],
     # 每步点击后的等待秒数
     "post_click_sleep": 1.0,
+    # 点击关闭按钮后未回主页时的最大补点次数
+    "home_check_max_attempts": 3,
     # HSV red range. Red wraps around hue 0/180, so two intervals are used.
     "hsv_lower1": [0, 120, 120],
     "hsv_upper1": [10, 255, 255],
@@ -149,6 +151,9 @@ class HomeRedDotTask(BaseTask):
         self.click(c_x, c_y)
         self.sleep(step_sleep)
 
+        # 点击关闭按钮后校验是否回到主页，未回主页则补点几次
+        self._ensure_home(self.config.get("close_button_click_roi", DEFAULT_CONFIG["close_button_click_roi"]))
+
         logger.info("获取好友体力：固定点击流程执行完毕")
         return True
 
@@ -187,6 +192,26 @@ class HomeRedDotTask(BaseTask):
         _, max_val, _, _ = cv2.minMaxLoc(res)
         threshold = self.config.get("home_threshold", DEFAULT_CONFIG["home_threshold"])
         return max_val >= threshold
+
+    def _ensure_home(self, click_roi) -> bool:
+        """点击关闭/返回按钮后校验是否回到主页；未回主页则按 click_roi 补点几次。"""
+        step_sleep = float(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+        max_attempts = int(self.config.get("home_check_max_attempts", DEFAULT_CONFIG["home_check_max_attempts"]))
+        for attempt in range(1, max_attempts + 1):
+            frame = self.next_frame()
+            if frame is None:
+                logger.warning("获取好友体力：校验主页时无画面可用")
+                return False
+            if self._is_home(frame):
+                logger.info(f"获取好友体力：已回到主页（第 {attempt} 次确认）")
+                return True
+            h, w = frame.shape[:2]
+            cx, cy = roi_center(click_roi, w, h)
+            logger.info(f"获取好友体力：未回主页，第 {attempt} 次补点关闭按钮 ({cx}, {cy})")
+            self.click(cx, cy)
+            self.sleep(step_sleep)
+        logger.warning(f"获取好友体力：{max_attempts} 次补点后仍未回主页")
+        return False
 
     def _detect_red_dot(self, frame: np.ndarray, roi=None) -> Optional[Tuple[int, int]]:
         if roi is None:

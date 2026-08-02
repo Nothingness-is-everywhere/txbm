@@ -69,6 +69,9 @@ _DISPATCH_CONTINUE_ROI = [0.4370, 0.8187, 0.5740, 0.8458]
 # 派遣"确认"按钮选区（每子任务第4次点击，固定位置）: x=484, y=1676, w=160, h=144  中心 (0.5222, 0.9104)
 _DISPATCH_CONFIRM_ROI = [0.4481, 0.8729, 0.5962, 0.9479]
 
+# 主页检测区域（与 HomeRedDotTask 一致，用于返回主界面后校验）: x=37, y=69, w=279, h=107
+_HOME_ROI = [0.0343, 0.0359, 0.2926, 0.0916]
+
 DEFAULT_CONFIG = {
     "_enabled": True,
     # 是否跟随"周常日常"大开始按钮一起执行（配置面板仅显示此项，其他技术配置项隐藏）
@@ -113,6 +116,12 @@ DEFAULT_CONFIG = {
     "dispatch_continue_roi": list(_DISPATCH_CONTINUE_ROI),
     # 派遣"确认"按钮区域（固定位置，所有子任务共用）
     "dispatch_confirm_roi": list(_DISPATCH_CONFIRM_ROI),
+    # 主页检测（返回主界面后校验用，复用 HomeRedDotTask 的主页模板）
+    "home_template_path": "templates/home_profile_button.png",
+    "home_template_roi": list(_HOME_ROI),
+    "home_threshold": 0.70,
+    # 返回主界面后未回主页时的最大补点次数
+    "home_check_max_attempts": 3,
     # 点击后等待秒数
     "post_click_sleep": 1.0,
     # HSV red range. Red wraps around hue 0/180, so two intervals are used.
@@ -163,12 +172,14 @@ class AlchemyDispatchTask(BaseTask):
         self.standalone_start = True
         self._step4_tpl: Optional[np.ndarray] = None
         self._dispatch_tpl: Optional[np.ndarray] = None
+        self._home_tpl: Optional[np.ndarray] = None
 
     def on_create(self):
         self._enabled = self.config.get("_enabled", True)
         self.follow_batch_start = self.config.get("follow_batch_start", True)
         self._load_step4_template()
         self._load_dispatch_template()
+        self._load_home_template()
 
     def _load_step4_template(self):
         """加载步骤4保存按钮模板文件到内存。"""
@@ -197,6 +208,52 @@ class AlchemyDispatchTask(BaseTask):
         if tpl is None:
             logger.warning(f"派遣：入口模板未找到，步骤7将无法匹配: {abs_path}")
         self._dispatch_tpl = tpl
+
+    def _load_home_template(self):
+        """加载主页模板文件到内存（返回主界面校验用）。"""
+        rel = self.config.get("home_template_path", DEFAULT_CONFIG["home_template_path"])
+        p = Path(rel)
+        abs_path = p if p.is_absolute() else (_PROJECT_ROOT / p)
+        try:
+            tpl = cv2.imdecode(np.fromfile(str(abs_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+        except Exception as e:
+            logger.warning(f"炼金和派遣：读取主页模板失败: {abs_path} ({e})")
+            tpl = None
+        if tpl is None:
+            logger.warning(f"炼金和派遣：主页模板未找到，返回主界面校验将跳过: {abs_path}")
+        self._home_tpl = tpl
+
+    def _is_home(self, frame: np.ndarray) -> bool:
+        """通过主页模板匹配判断当前是否在主界面。"""
+        if self._home_tpl is None:
+            return False
+        roi = self.config.get("home_template_roi", DEFAULT_CONFIG["home_template_roi"])
+        threshold = float(self.config.get("home_threshold", DEFAULT_CONFIG["home_threshold"]))
+        matched, _ = self._match_template(frame, self._home_tpl, roi, threshold)
+        return matched
+
+    def _ensure_home(self, click_roi, label: str) -> bool:
+        """点击返回按钮后校验是否回到主界面；未回主页则按 click_roi 补点几次。
+
+        label 用于日志标识（如"炼金步骤5"、"派遣步骤11"）。
+        """
+        step_sleep = float(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+        max_attempts = int(self.config.get("home_check_max_attempts", DEFAULT_CONFIG["home_check_max_attempts"]))
+        for attempt in range(1, max_attempts + 1):
+            frame = self.next_frame()
+            if frame is None:
+                logger.warning(f"炼金和派遣：{label} 校验主页时无画面可用")
+                return False
+            if self._is_home(frame):
+                logger.info(f"炼金和派遣：{label} 已回到主界面（第 {attempt} 次确认）")
+                return True
+            h, w = frame.shape[:2]
+            cx, cy = roi_center(click_roi, w, h)
+            logger.info(f"炼金和派遣：{label} 未回主界面，第 {attempt} 次补点返回 ({cx}, {cy})")
+            self.click(cx, cy)
+            self.sleep(step_sleep)
+        logger.warning(f"炼金和派遣：{label} {max_attempts} 次补点后仍未回主界面")
+        return False
 
     def _match_template(self, frame: np.ndarray, template: np.ndarray, roi, threshold: float) -> Tuple[bool, float]:
         """在 frame 的 roi 区域内匹配 template，返回 (是否匹配, 最高置信度)。"""
@@ -342,6 +399,9 @@ class AlchemyDispatchTask(BaseTask):
         else:
             logger.warning("炼金：步骤5无画面可用，跳过")
 
+        # 步骤5后校验是否回到主界面，未回主页则按返回按钮补点几次
+        self._ensure_home(self.config.get("step5_click_roi", DEFAULT_CONFIG["step5_click_roi"]), "炼金步骤5")
+
         # === 派遣流程 ===
         # 步骤6：返回主界面后再次检测入口红点并点击 》 重新进入"炼金和派遣"页面
         frame6 = self.next_frame()
@@ -414,6 +474,9 @@ class AlchemyDispatchTask(BaseTask):
                     logger.info(f"[步骤11] 点击 返回主界面 按钮 ({rx}, {ry})")
                     self.click(rx, ry)
                     self.sleep(step_sleep)
+
+                    # 步骤11后校验是否回到主界面，未回主页则补点几次
+                    self._ensure_home(ret_roi, "派遣步骤11")
 
         logger.info("炼金和派遣：流程执行完毕")
         return True
