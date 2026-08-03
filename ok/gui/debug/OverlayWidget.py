@@ -40,12 +40,19 @@ class OverlayWidget(QWidget):
         self.logs = []
         self.blur_images = []
         communicate.log.connect(self.add_log)
+        # 日志批重绘：add_log 只置脏标志，由定时器每 150ms 合并一次重绘，
+        # 避免高频日志每条触发整窗 paintEvent。
+        self._log_dirty = False
+        self._log_timer = QTimer(self)
+        self._log_timer.setInterval(150)
+        self._log_timer.timeout.connect(self._flush_log_update)
+        self._log_timer.start()
 
     def add_log(self, level_no, message):
         for log in self.black_list_logs:
             if log in message:
                 return
-        
+
         parts = message.split(':', 3)
         if len(parts) > 3:
             message = parts[3]
@@ -54,7 +61,12 @@ class OverlayWidget(QWidget):
         self.logs.append((level, message))
         if len(self.logs) > 50:
             self.logs.pop(0)
-        self.update()
+        self._log_dirty = True
+
+    def _flush_log_update(self):
+        if self._log_dirty:
+            self._log_dirty = False
+            self.update()
 
     def paint_logs(self, painter):
         if not og.app.ok_config.get('show_overlay_logs', True):

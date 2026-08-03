@@ -5,7 +5,10 @@ import os
 import queue
 import re
 import sys
+import threading
+import time
 import traceback
+from collections import deque
 from logging.handlers import TimedRotatingFileHandler, QueueHandler, QueueListener
 from typing import Optional
 
@@ -16,6 +19,7 @@ _ok_logger = logging.getLogger("ok")
 _OK_STDOUT_HANDLER = "_ok_stdout_handler"
 _file_listener = None
 _file_handler = None
+_batched_handler = None
 
 
 def _ensure_default_console_logger():
@@ -154,8 +158,67 @@ class CommunicateHandler(logging.Handler):
         self.communicate.log.emit(record.levelno, log_message)
 
 
+class BatchedCommunicateHandler(logging.Handler):
+    """Buffers log records and flushes them to the GUI thread at a bounded rate.
+
+    Worker 线程只往线程安全 deque 追加（不触 UI）；守护线程按固定间隔批量 flush，
+    限制 communicate.log 信号注入 GUI 事件队列的速率，防 debug 日志风暴拖慢主线程。
+    回退：OK_LOG_BATCH_DISABLE=1 时 config_logger 改用直发 CommunicateHandler。
+    """
+
+    def __init__(self, flush_interval=0.15, max_batch=200):
+        super().__init__()
+        self._buf = deque()
+        self._lock = threading.Lock()
+        self._flush_interval = max(0.01, float(flush_interval))
+        self._max_batch = max(1, int(max_batch))
+        self._stop = False
+        self._communicate = None
+        self._thread = threading.Thread(target=self._loop, name="LogBatcher", daemon=True)
+        self._thread.start()
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            with self._lock:
+                self._buf.append((record.levelno, msg))
+                # 防突发日志无界增长：超过 4 倍上限时丢弃最旧
+                if len(self._buf) > self._max_batch * 4:
+                    self._buf.popleft()
+        except Exception:
+            self.handleError(record)
+
+    def _loop(self):
+        while not self._stop:
+            time.sleep(self._flush_interval)
+            self._flush()
+        self._flush()
+
+    def _flush(self):
+        with self._lock:
+            if not self._buf:
+                return
+            batch = list(self._buf)
+            self._buf.clear()
+        if self._communicate is None:
+            try:
+                from ok.gui.Communicate import communicate
+                self._communicate = communicate
+            except Exception:
+                return
+        # 单次 flush 最多 max_batch 条，超量保留最新（保护 GUI 事件队列）
+        if len(batch) > self._max_batch:
+            batch = batch[-self._max_batch:]
+        log_signal = self._communicate.log
+        for levelno, msg in batch:
+            log_signal.emit(levelno, msg)
+
+    def stop(self):
+        self._stop = True
+
+
 def config_logger(config=None, name='ok-script'):
-    global _file_listener, _file_handler
+    global _file_listener, _file_handler, _batched_handler
 
     if _file_listener is not None:
         _file_listener.stop()
@@ -163,6 +226,9 @@ def config_logger(config=None, name='ok-script'):
     if _file_handler is not None:
         _file_handler.close()
         _file_handler = None
+    if _batched_handler is not None:
+        _batched_handler.stop()
+        _batched_handler = None
 
     parser = argparse.ArgumentParser(description='Process some parameters.')
     parser.add_argument('--parent_pid', type=int, help='Parent process ID', default=0)
@@ -175,7 +241,22 @@ def config_logger(config=None, name='ok-script'):
     else:
         _ok_logger.setLevel(logging.INFO)
 
-    communicate_handler = CommunicateHandler()
+    if os.environ.get('OK_LOG_BATCH_DISABLE', '0') in ('1', 'true', 'yes', 'on'):
+        # 回退：直发 handler，每条日志立即 emit（旧行为）
+        communicate_handler = CommunicateHandler()
+    else:
+        # 默认：批处理 handler，worker 线程入队、守护线程按间隔批量 flush
+        try:
+            flush_interval = float(os.environ.get('OK_LOG_FLUSH_MS', '150')) / 1000.0
+        except (TypeError, ValueError):
+            flush_interval = 0.15
+        try:
+            max_batch = int(os.environ.get('OK_LOG_BATCH_MAX', '200'))
+        except (TypeError, ValueError):
+            max_batch = 200
+        communicate_handler = BatchedCommunicateHandler(
+            flush_interval=flush_interval, max_batch=max_batch)
+        _batched_handler = communicate_handler
     communicate_handler.setFormatter(_ok_log_formatter)
     existing_stdout_handler = _get_stdout_handler()
     _ok_logger.handlers = [existing_stdout_handler] if existing_stdout_handler and args.parent_pid == 0 else []

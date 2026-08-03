@@ -1,4 +1,5 @@
 import sys
+import os
 import threading
 import time
 
@@ -117,6 +118,12 @@ class TaskExecutor:
         # for hot rollback (see _managed_trigger_enabled).
         from ok.trigger.scheduler import TriggerScheduler
         self.trigger_scheduler = TriggerScheduler()
+        # 识别主循环最小帧间隔（秒）：抓帧很快时（如 NEMU IPC）限制帧率，避免空转/CPU 峰值。
+        # OK_MIN_FRAME_INTERVAL_MS 默认 50ms（~20 FPS），0 禁用。ADB（~300ms/帧）不受影响。
+        try:
+            self._min_frame_interval = max(0.0, int(os.getenv('OK_MIN_FRAME_INTERVAL_MS', '50')) / 1000.0)
+        except (TypeError, ValueError):
+            self._min_frame_interval = 0.05
 
     def load_tr(self):
         locale_name = self.locale.name()
@@ -262,6 +269,14 @@ class TaskExecutor:
     def next_frame(self, time_out=6):
         self.reset_scene()
         start = time.time()
+        # 节流：距上一帧不足最小间隔时等待差额（受 time_out 上限约束，可被 wake 事件打断）。
+        if self._min_frame_interval > 0 and self._last_frame_time > 0:
+            remaining = self._min_frame_interval - (time.time() - self._last_frame_time)
+            if remaining > 0:
+                if time_out is not None:
+                    remaining = min(remaining, max(0.0, time_out - (time.time() - start)))
+                if remaining > 0:
+                    self._wait_for_activity(remaining)
         while not self.exit_event.is_set():
             self.check_enabled()
             if time_out is not None and time.time() - start >= time_out:

@@ -9,8 +9,9 @@ os.environ["PYTHONIOENCODING"] = "utf-8"
 
 from ok import OK
 
+# debug 默认关闭以降低日志/渲染负担；开发调试时设置环境变量 OK_DEBUG=1 开启。
 config = {
-    "debug": True,
+    "debug": os.environ.get("OK_DEBUG", "0") in ("1", "true", "yes", "on"),
     "use_gui": True,
     "gui_title": "ok-script",
     "gui_icon": ":/icon/icon.ico",

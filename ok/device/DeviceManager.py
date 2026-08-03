@@ -1,6 +1,7 @@
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import cv2
@@ -21,6 +22,15 @@ from ok.util.window import windows_graphics_available, find_hwnd
 
 logger = Logger.get_logger(__name__)
 
+
+def _env_float(name, default):
+    """读取环境变量为 float，失败返回默认值。"""
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
 class DeviceManager:
 
     def __init__(self, app_config, exit_event=None, global_config=None):
@@ -31,6 +41,15 @@ class DeviceManager:
         self.capture_method = None
         self.global_config = global_config
         self._adb_lock = threading.Lock()
+        # B5: 设备刷新冷却 / adb 重连退避 / kill adb 限频，避免短时重复 adb list/connect 抖动。
+        # 均可通过环境变量调整，0 表示禁用对应节流。
+        self._adb_connect_state = {}  # addr -> {'next_allowed': ts, 'backoff': seconds}
+        self._last_refresh_time = 0.0
+        self._last_kill_adb_time = 0.0
+        self._refresh_cooldown = max(0.0, _env_float('OK_REFRESH_COOLDOWN_MS', 2000) / 1000.0)
+        self._adb_backoff_initial = max(0.0, _env_float('OK_ADB_CONNECT_BACKOFF_MS', 1000) / 1000.0)
+        self._adb_backoff_max = max(self._adb_backoff_initial, _env_float('OK_ADB_CONNECT_BACKOFF_MAX_MS', 8000) / 1000.0)
+        self._adb_kill_cooldown = max(0.0, _env_float('OK_ADB_KILL_COOLDOWN_MS', 10000) / 1000.0)
         if app_config.get('adb'):
             self.packages = app_config.get('adb').get('packages')
         else:
@@ -140,6 +159,13 @@ class DeviceManager:
             return self._adb
 
     def try_kill_adb(self, e=None):
+        # 限频：OK_ADB_KILL_COOLDOWN_MS 内不重复 kill，避免短时多次遍历进程 + kill adb server 抖动
+        cooldown = getattr(self, '_adb_kill_cooldown', 0.0)
+        now = time.time()
+        if cooldown > 0 and now - getattr(self, '_last_kill_adb_time', 0.0) < cooldown:
+            logger.debug(f'try kill adb skipped (cooldown {cooldown:.1f}s) {e}')
+            return
+        self._last_kill_adb_time = now
         logger.error('try kill adb server', e)
         import psutil
         for proc in psutil.process_iter():
@@ -151,8 +177,38 @@ class DeviceManager:
                     logger.error(f'kill adb server failed', e)
         logger.info('try kill adb end')
 
+    def _adb_connect_backoff_remaining(self, addr):
+        """秒数：addr 距离下次允许重连的剩余时间；0 表示可立即尝试。"""
+        state = getattr(self, '_adb_connect_state', {}).get(addr)
+        if not state:
+            return 0.0
+        return max(0.0, state.get('next_allowed', 0.0) - time.time())
+
+    def _record_adb_connect_failure(self, addr):
+        """记录连接失败并按 1s/2s/4s/8s 指数退避（上限 OK_ADB_CONNECT_BACKOFF_MAX_MS）。"""
+        initial = getattr(self, '_adb_backoff_initial', 1.0)
+        max_backoff = getattr(self, '_adb_backoff_max', 8.0)
+        state = getattr(self, '_adb_connect_state', {})
+        prev = state.get(addr, {}).get('backoff', 0.0)
+        backoff = initial if prev <= 0 else min(prev * 2, max_backoff)
+        state[addr] = {'next_allowed': time.time() + backoff, 'backoff': backoff}
+        self._adb_connect_state = state
+        logger.info(f'adb_connect {addr} failure backoff {backoff:.1f}s')
+
+    def _clear_adb_connect_backoff(self, addr):
+        state = getattr(self, '_adb_connect_state', {})
+        if addr in state:
+            state.pop(addr, None)
+            self._adb_connect_state = state
+
     def adb_connect(self, addr, try_connect=True):
         from adbutils import AdbError
+        # 退避：仅对发起连接的调用（try_connect=True）应用；递归确认（try_connect=False）跳过
+        if try_connect:
+            remaining = self._adb_connect_backoff_remaining(addr)
+            if remaining > 0:
+                logger.debug(f'adb_connect {addr} skipped (backoff {remaining:.1f}s)')
+                return None
         try:
             for device in self.adb.list():
                 if self.exit_event.is_set():
@@ -164,18 +220,22 @@ class DeviceManager:
                         self.adb.disconnect(addr)
                     else:
                         logger.info(f'adb_connect already connected {addr}')
+                        self._clear_adb_connect_backoff(addr)
                         return self.adb.device(serial=addr)
             if try_connect:
                 ret = self.adb.connect(addr, timeout=5)
                 logger.info(f'adb_connect try_connect {addr} {ret}')
+                self._clear_adb_connect_backoff(addr)
                 return self.adb_connect(addr, try_connect=False)
             else:
                 logger.info(f'adb_connect {addr} not in device list {self.adb.list()}')
         except AdbError as e:
             logger.error(f"adb connect error {addr}", e)
+            self._record_adb_connect_failure(addr)
             self.try_kill_adb(e)
         except Exception as e:
             logger.error(f"adb connect error return none {addr}", e)
+            self._record_adb_connect_failure(addr)
 
     def get_devices(self):
         devices = list(self.device_dict.values())
@@ -270,6 +330,14 @@ class DeviceManager:
             }
 
     def do_refresh(self, current=False):
+        # 冷却：OK_REFRESH_COOLDOWN_MS 内重复调用直接跳过，避免短时重复 adb list/connect 抖动
+        cooldown = getattr(self, '_refresh_cooldown', 0.0)
+        if cooldown > 0:
+            now = time.time()
+            if now - getattr(self, '_last_refresh_time', 0.0) < cooldown:
+                logger.debug(f'do_refresh skipped (cooldown {cooldown:.1f}s)')
+                return
+            self._last_refresh_time = now
         try:
             self.refresh_emulators(current)
             self.refresh_phones(current)
@@ -567,6 +635,45 @@ class DeviceManager:
             if self.interaction:
                 self.interaction.capture = self.capture_method
 
+    def _is_mumu12(self, emulator):
+        """True if emulator is a MuMuPlayer12 instance supported by NemuIpc.
+
+        镜像 GUI 下拉框判定（SelectCaptureListView.update_for_device）：
+        非 mumu（LDPlayer/BlueStacks 等）直接返回 False，跳过 NEMU 探测以避免启动延迟。
+        """
+        if emulator is None:
+            return False
+        try:
+            from ok.alas.emulator_windows import Emulator
+            if emulator.type != Emulator.MuMuPlayer12:
+                return False
+            if 'MuMuPlayerGlobal' in (emulator.path or ''):
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _try_nemu_capture(self, emulator):
+        """探测 NEMU IPC 是否可用；成功返回已连接的捕获方法，失败返回 None（永不抛异常）。
+
+        用 init_nemu() 探测而非 get_frame()：探测上限 ≤0.5-1s，避免 screenshot 重试链 ~10s。
+        成功时 nemu 连接被后续 do_get_frame 复用；失败时关闭临时方法释放资源。
+        """
+        if emulator is None:
+            return None
+        method = NemuIpcCaptureMethod(self, self.exit_event)
+        try:
+            method.update_emulator(emulator)
+            method.init_nemu()
+            return method
+        except Exception as e:
+            logger.warning(f'nemu ipc probe failed, will fall back to ADB: {e}')
+            try:
+                method.close()
+            except Exception:
+                pass
+            return None
+
     def start(self):
         self.handler.post(self.do_start, remove_existing=True, skip_if_running=True)
 
@@ -612,21 +719,51 @@ class DeviceManager:
                 logger.info(f'do_start use windows capture {self.hwnd_window.title}')
                 self.use_windows_capture()
             else:
-                if self.config.get('capture') == 'ipc':
-                    if not isinstance(self.capture_method, NemuIpcCaptureMethod):
+                saved_capture = self.config.get('capture')
+                emulator = preferred.get('emulator')
+                # OK_CAPTURE_PREFER_FAST=1（默认）：mumu12 设备自动升级到 NEMU IPC，探测失败降级 ADB。
+                # =0 时回退到旧逻辑（显式 ipc 用 nemu，其余用 adb）。
+                prefer_fast = os.getenv('OK_CAPTURE_PREFER_FAST', '1') == '1'
+                explicit_ipc = saved_capture == 'ipc'
+                auto_upgrade = (prefer_fast and self._is_mumu12(emulator)
+                                and saved_capture in ('adb', '', 'auto', None))
+                want_nemu = explicit_ipc or auto_upgrade
+                used_nemu = False
+
+                if want_nemu:
+                    if isinstance(self.capture_method, NemuIpcCaptureMethod):
+                        # 复用已有实例，仅更新 emulator，不重复探测（避免每次 refresh 多 0.5-1s）
+                        self.capture_method.update_emulator(emulator)
+                        used_nemu = True
+                        logger.info(f'capture method selected: NemuIpc (reused) {preferred}')
+                    elif explicit_ipc:
+                        # 显式 ipc：保留原行为，不探测、不降级
                         if self.capture_method is not None:
                             self.capture_method.close()
                         self.capture_method = NemuIpcCaptureMethod(self, self.exit_event)
-                    self.capture_method.update_emulator(self.get_preferred_device().get('emulator'))
-                    logger.info(f'use ipc capture {preferred}')
-                else:
-                    if not isinstance(self.capture_method, ADBCaptureMethod):
-                        logger.debug(f'use adb capture')
-                        if self.capture_method is not None:
-                            self.capture_method.close()
-                        self.capture_method = ADBCaptureMethod(self, self.exit_event, width=width,
-                                                               height=height)
-                        logger.info(f'use adb capture {preferred}')
+                        self.capture_method.update_emulator(emulator)
+                        used_nemu = True
+                        logger.info(f'use ipc capture {preferred}')
+                    else:
+                        # 自动升级：先探测 nemu，仅当成功才切换；失败保留现有 ADB
+                        probed = self._try_nemu_capture(emulator)
+                        if probed is not None:
+                            if self.capture_method is not None:
+                                self.capture_method.close()
+                            self.capture_method = probed
+                            used_nemu = True
+                            logger.info(f'capture method selected: NemuIpc (auto-upgrade from {saved_capture!r})')
+                        else:
+                            logger.info(f'capture method selected: ADB (nemu probe failed, fallback)')
+
+                if not used_nemu and not isinstance(self.capture_method, ADBCaptureMethod):
+                    # 原始 ADB 路径，同时作为 nemu 降级兜底
+                    logger.debug(f'use adb capture')
+                    if self.capture_method is not None:
+                        self.capture_method.close()
+                    self.capture_method = ADBCaptureMethod(self, self.exit_event, width=width,
+                                                           height=height)
+                    logger.info(f'use adb capture {preferred}')
                 if preferred.get('full_path'):
                     logger.info(f'ensure_hwnd for debugging {preferred} {width, height}')
                     self.ensure_hwnd(None, preferred.get('full_path').replace("nx_main/MuMuNxMain.exe",
