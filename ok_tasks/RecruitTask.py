@@ -296,6 +296,25 @@ class RecruitTask(BaseTask):
             logger.info(f"招募：按钮{bidx} OCR识别: '{text}'")
         return texts
 
+    def _check_subtask_ocr_and_rare_role(self, subtask_idx: int, btn_rois: list, rare_keywords: list) -> Optional[list]:
+        """OCR 识别按钮文本，并在识别到稀有角色时暂停处理当前子任务。"""
+        frame_ocr = self.next_frame()
+        if frame_ocr is None:
+            logger.warning(f"[步骤d-{subtask_idx}] OCR前无画面可用，跳过该子任务剩余步骤")
+            return None
+
+        texts = self._ocr_button_texts(frame_ocr, btn_rois)
+        full_text = "".join(texts)
+        hit_rare = [kw for kw in rare_keywords if kw in full_text]
+        if hit_rare:
+            msg = (f"招募子任务{subtask_idx}识别到稀有角色: {hit_rare}\n"
+                   f"5个按钮识别结果: {texts}")
+            logger.warning(msg)
+            self._alert_and_pause(msg)
+            return None
+
+        return texts
+
     def _select_best_buttons(self, texts: list) -> list:
         """
         根据OCR识别的5个按钮文字，选择SR概率最高的2个按钮索引（0-based）。
@@ -495,12 +514,17 @@ class RecruitTask(BaseTask):
             self.click(c1x, c1y)
             self.sleep(step_sleep)
 
+            # d-3：点击区域2（点两下）前先做一次OCR/稀有角色检查
+            texts = self._check_subtask_ocr_and_rare_role(idx, btn_rois, rare_keywords)
+            if texts is None:
+                continue
+
             # d-3：点击区域2（点两下）
             c2x, c2y = roi_center(sub_click2_roi, w, h)
-            for t in range(1, sub_click2_times + 1):
-                logger.info(f"[步骤d-{idx}] 点击区域2 第{t}/{sub_click2_times}次 ({c2x}, {c2y})")
-                self.click(c2x, c2y)
-                self.sleep(step_sleep)
+            logger.info(f"[步骤d-{idx}] 点击区域2({c2x}, {c2y})")
+            self.click(c2x, c2y)
+            self.sleep(step_sleep)
+
 
             # d-4：点击区域3
             c3x, c3y = roi_center(sub_click3_roi, w, h)
@@ -508,22 +532,9 @@ class RecruitTask(BaseTask):
             self.click(c3x, c3y)
             self.sleep(step_sleep)
 
-            # d-5：OCR识别5个候选按钮中文
-            frame_ocr = self.next_frame()
-            if frame_ocr is None:
-                logger.warning(f"[步骤d-{idx}] OCR前无画面可用，跳过该子任务剩余步骤")
-                continue
-            texts = self._ocr_button_texts(frame_ocr, btn_rois)
-
-            # d-6：稀有角色检查（领袖/菁英 → 暂停并弹窗）
-            full_text = "".join(texts)
-            hit_rare = [kw for kw in rare_keywords if kw in full_text]
-            if hit_rare:
-                msg = (f"招募子任务{idx}识别到稀有角色: {hit_rare}\n"
-                       f"5个按钮识别结果: {texts}")
-                logger.warning(msg)
-                self._alert_and_pause(msg)
-                # 用户手动处理并恢复后，继续下一个子任务（不执行当前子任务剩余步骤）
+            # d-5：OCR识别5个候选按钮中文，并在稀有角色时暂停
+            texts = self._check_subtask_ocr_and_rare_role(idx, btn_rois, rare_keywords)
+            if texts is None:
                 continue
 
             # d-7：计算SR概率最高的2个按钮并点击
