@@ -165,7 +165,7 @@ class DebugTab(Tab):
         copy_btn.clicked.connect(self._copy_selection_info)
         result_layout.addWidget(copy_btn)
 
-        save_btn = PushButton(self.tr("Save Selection Image"))
+        save_btn = PushButton(self.tr("保存选区图片"))
         save_btn.setToolTip(self.tr("Save the cropped selection image to a file"))
         save_btn.clicked.connect(self._save_selection_image)
         result_layout.addWidget(save_btn)
