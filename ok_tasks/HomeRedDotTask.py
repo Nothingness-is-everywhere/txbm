@@ -5,6 +5,7 @@ Home red-dot gated fixed-click task for 天下布魔 (Tianxia Bumo).
   1. 模板匹配确认在主页。
   2. 仅检测第一个主页红点；无红点则结束，有红点继续。
   3. 第 2/3/4/5 步按固定位置直接点击（不再做额外红点检测）。
+  4. 步骤4前会做一次"是否进入奖励页面"的模板匹配，未匹配则补点第二入口固定位置。
 """
 
 import logging
@@ -21,6 +22,10 @@ logger = logging.getLogger("HomeRedDotTask")
 
 # Selection: x=37, y=69, w=279, h=107  (rx=0.0343, ry=0.0359, rw=0.2583, rh=0.0557)
 _PROFILE_ROI = [0.0343, 0.0359, 0.2926, 0.0916]
+
+# 步骤4前：奖励页面模板匹配选区 (x=600, y=492, w=148, h=44 @ 1080×1920) 中心 (674, 514)
+# 模板文件 templates/reward_page_indicator.png
+_REWARD_PAGE_ROI = [0.5556, 0.2562, 0.6926, 0.2792]
 
 DEFAULT_CONFIG = {
     "_enabled": True,
@@ -43,6 +48,11 @@ DEFAULT_CONFIG = {
     # 第 5 步固定点击区域（关闭按钮）
     # Selection: x=479,y=1772,w=121,h=118 (rx=0.4435, ry=0.9229, rw=0.1120, rh=0.0615)
     "close_button_click_roi": [0.4435, 0.9229, 0.5555, 0.9844],
+    # 步骤4前：奖励页面模板匹配（未匹配则补点第二入口固定位置）
+    "reward_page_template_path": "templates/reward_page_indicator.png",
+    "reward_page_template_roi": list(_REWARD_PAGE_ROI),
+    "reward_page_threshold": 0.70,
+    "reward_page_check_max_attempts": 3,
     # 每步点击后的等待秒数
     "post_click_sleep": 1.0,
     # 点击关闭按钮后未回主页时的最大补点次数
@@ -91,6 +101,7 @@ class HomeRedDotTask(BaseTask):
         # 单独启动本任务时不连带启用 enable_after_start 任务（如 GameStartupTask），保持单独执行
         self.standalone_start = True
         self._home_tpl: Optional[np.ndarray] = None
+        self._reward_page_tpl: Optional[np.ndarray] = None
 
     def on_create(self):
         # 永不自动启动；用户必须点"批量启动"或单个"Start"按钮才会执行。
@@ -98,6 +109,7 @@ class HomeRedDotTask(BaseTask):
         self._enabled = False
         self.follow_batch_start = self.config.get("follow_batch_start", True)
         self._load_template()
+        self._load_reward_page_template()
 
     def run(self):
         """
@@ -138,6 +150,9 @@ class HomeRedDotTask(BaseTask):
         self.click(f_x, f_y)
         self.sleep(step_sleep)
 
+        # 3.5 模板匹配校验是否进入奖励页面；未进入则补点第二入口固定位置
+        self._ensure_reward_page(self.config.get("followup_click_roi", DEFAULT_CONFIG["followup_click_roi"]))
+
         # 4. 点击奖励按钮固定位置
         r_x, r_y = roi_center(self.config.get("reward_click_roi", DEFAULT_CONFIG["reward_click_roi"]), w, h)
         logger.info(f"[步骤4/5] 点击奖励按钮固定位置 ({r_x}, {r_y})")
@@ -170,6 +185,55 @@ class HomeRedDotTask(BaseTask):
         roi = self.config.get("home_template_roi", DEFAULT_CONFIG["home_template_roi"])
         threshold = float(self.config.get("home_threshold", DEFAULT_CONFIG["home_threshold"]))
         return is_on_home(frame, self._home_tpl, roi, threshold)
+
+    def _load_reward_page_template(self):
+        """加载步骤4前的奖励页面模板；模板缺失时校验将被跳过（不阻塞流程）。"""
+        rel = self.config.get(
+            "reward_page_template_path", DEFAULT_CONFIG["reward_page_template_path"]
+        )
+        tpl = load_template_image(rel)
+        if tpl is None:
+            logger.warning(f"获取好友体力：奖励页模板未找到，步骤4前页面校验将跳过: {rel}")
+        self._reward_page_tpl = tpl
+
+    def _is_on_reward_page(self, frame: np.ndarray) -> bool:
+        """检测当前画面是否已进入奖励页面；模板缺失时返回 True（跳过校验，向后兼容）。"""
+        if self._reward_page_tpl is None:
+            return True
+        roi = self.config.get(
+            "reward_page_template_roi", DEFAULT_CONFIG["reward_page_template_roi"]
+        )
+        threshold = float(
+            self.config.get("reward_page_threshold", DEFAULT_CONFIG["reward_page_threshold"])
+        )
+        return is_on_home(frame, self._reward_page_tpl, roi, threshold)
+
+    def _ensure_reward_page(self, click_roi) -> bool:
+        """步骤4前校验是否进入奖励页面；未进入则按 click_roi（第二入口）补点几次。"""
+        step_sleep = float(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+        max_attempts = int(
+            self.config.get(
+                "reward_page_check_max_attempts",
+                DEFAULT_CONFIG["reward_page_check_max_attempts"],
+            )
+        )
+        for attempt in range(1, max_attempts + 1):
+            frame = self.next_frame()
+            if frame is None:
+                logger.warning("获取好友体力：校验奖励页面时无画面可用")
+                return False
+            if self._is_on_reward_page(frame):
+                logger.info(f"获取好友体力：已进入奖励页面（第 {attempt} 次确认）")
+                return True
+            h, w = frame.shape[:2]
+            cx, cy = roi_center(click_roi, w, h)
+            logger.info(
+                f"获取好友体力：未进入奖励页面，第 {attempt} 次补点第二入口 ({cx}, {cy})"
+            )
+            self.click(cx, cy)
+            self.sleep(step_sleep)
+        logger.warning(f"获取好友体力：{max_attempts} 次补点后仍未进入奖励页面")
+        return False
 
     def _ensure_home(self, click_roi) -> bool:
         """点击关闭/返回按钮后校验是否回到主页；未回主页则按 click_roi 补点几次。"""

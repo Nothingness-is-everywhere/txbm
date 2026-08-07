@@ -161,6 +161,13 @@ class DebugTab(Tab):
         self.result_edit.setPlaceholderText(self.tr("Select a region on the image to see coordinates..."))
         result_layout.addWidget(self.result_edit, stretch=1)
 
+        self.copy_mode_combo = ComboBox()
+        self.copy_mode_combo.addItem(self.tr("选区基本数据"), "plain_text")
+        self.copy_mode_combo.addItem(self.tr("模板匹配"), "template_match")
+        self.copy_mode_combo.addItem(self.tr("点击中心"), "click_center")
+        self.copy_mode_combo.setCurrentIndex(0)
+        result_layout.addWidget(self.copy_mode_combo)
+
         copy_btn = PushButton(self.tr("Copy"))
         copy_btn.clicked.connect(self._copy_selection_info)
         result_layout.addWidget(copy_btn)
@@ -269,9 +276,40 @@ class DebugTab(Tab):
             )
         )
 
+    def _build_copy_text(self):
+        """Build clipboard content based on the selected copy mode."""
+        if not self._last_selection_info:
+            return None
+
+        info = self._last_selection_info
+        mode = self.copy_mode_combo.currentData()
+        if mode == "template_match":
+            rx = info.get('rx', 0.0)
+            ry = info.get('ry', 0.0)
+            rw = info.get('rw', 0.0)
+            rh = info.get('rh', 0.0)
+            x2 = rx + rw
+            y2 = ry + rh
+            return "\n".join([
+                "from ok_tasks._home import load_template_image, match_template_in_roi",
+                "",
+                "template = load_template_image(\"templates/your_template.png\")",
+                f"roi = [{rx:.6f}, {ry:.6f}, {x2:.6f}, {y2:.6f}]",
+                "threshold = 0.80",
+                "matched, confidence = match_template_in_roi(frame, template, roi, threshold)",
+            ])
+        if mode == "click_center":
+            center_rx = info.get('center_rx', 0.0)
+            center_ry = info.get('center_ry', 0.0)
+            return "\n".join([
+                "# Click the center of the selected region",
+                f"self.click(int(self.width * {center_rx:.6f}), int(self.height * {center_ry:.6f}))",
+            ])
+        return self.result_edit.toPlainText()
+
     def _copy_selection_info(self):
-        """Copy selection info to clipboard."""
-        text = self.result_edit.toPlainText()
+        """Copy selection info or generated code to clipboard."""
+        text = self._build_copy_text()
         if not text:
             alert_info(self.tr("No selection to copy"))
             return
