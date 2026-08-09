@@ -33,9 +33,9 @@ _ENTRY_ROI = [0.2815, 0.9208, 0.4037, 0.9520]
 # rx=0.1000, ry=0.4188, rw=0.3185, rh=0.0396
 _CHARACTER_PAGE_ROI = [0.1000, 0.4188, 0.4185, 0.4583]
 
-# 步骤3：升级目标指示模板匹配选区 x=68, y=148, w=160, h=72 @ 1080x1920 中心 (148, 184)
-# rx=0.0630, ry=0.0771, rw=0.1481, rh=0.0375
-_TARGET_INDICATOR_ROI = [0.0630, 0.0771, 0.2111, 0.1146]
+# 步骤3：升级目标指示模板匹配选区 x=112, y=1468, w=248, h=80 @ 1080x1920 中心 (236, 1508)
+# rx=0.1037, ry=0.7646, rw=0.2296, rh=0.0417
+_TARGET_INDICATOR_ROI = [0.1037, 0.7646, 0.3333, 0.8062]
 
 # 步骤3：未匹配时点击的切换按钮选区 x=924, y=404, w=52, h=76 @ 1080x1920 中心 (950, 442)
 # rx=0.8556, ry=0.2104, rw=0.0481, rh=0.0396
@@ -299,6 +299,13 @@ class DailyLevelUpTask(BaseTask):
 
     def _ensure_character_page(self, click_roi) -> bool:
         """步骤2：校验是否进入角色界面；未进入则按 click_roi（角色入口）补点几次。"""
+        # 模板缺失直接失败返回，避免循环空点击
+        if self._character_page_tpl is None:
+            logger.warning(
+                "日常升两级：步骤2角色界面模板缺失 (templates/levelup_character_page.png)，"
+                "请先运行 move_levelup_templates.py 将截图移动到 templates/，跳过页面校验"
+            )
+            return True
         step_sleep = float(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
         max_attempts = int(
             self.config.get(
@@ -306,17 +313,34 @@ class DailyLevelUpTask(BaseTask):
                 DEFAULT_CONFIG["character_page_check_max_attempts"],
             )
         )
+        roi = self.config.get("character_page_template_roi", DEFAULT_CONFIG["character_page_template_roi"])
+        threshold = float(
+            self.config.get("character_page_threshold", DEFAULT_CONFIG["character_page_threshold"])
+        )
+        tpl_h, tpl_w = self._character_page_tpl.shape[:2]
         for attempt in range(1, max_attempts + 1):
             frame = self.next_frame()
             if frame is None:
                 logger.warning("日常升两级：校验角色界面时无画面可用")
                 return False
-            if self._is_on_character_page(frame):
-                logger.info(f"日常升两级：已进入角色界面（第 {attempt} 次确认）")
+            fh, fw = frame.shape[:2]
+            x1, y1, x2, y2 = max(0, int(fw*roi[0])), max(0, int(fh*roi[1])), min(fw, int(fw*roi[2])), min(fh, int(fh*roi[3]))
+            matched, conf = self._match_template_direct(
+                frame, self._character_page_tpl, roi, threshold
+            )
+            if matched:
+                logger.info(
+                    f"日常升两级：已进入角色界面（第 {attempt} 次确认，置信度 {conf:.3f}，"
+                    f"搜索区 {x1,y1,x2-x1,y2-y1}px，模板 {tpl_w}x{tpl_h}px）"
+                )
                 return True
             h, w = frame.shape[:2]
             cx, cy = roi_center(click_roi, w, h)
-            logger.info(f"日常升两级：未进入角色界面，第 {attempt} 次补点入口 ({cx}, {cy})")
+            logger.info(
+                f"日常升两级：未进入角色界面 (置信度 {conf:.3f} < {threshold}，"
+                f"搜索区 {x1,y1,x2-x1,y2-y1}px，模板 {tpl_w}x{tpl_h}px)，"
+                f"第 {attempt} 次补点入口 ({cx}, {cy})"
+            )
             self.click(cx, cy)
             self.sleep(step_sleep)
         logger.warning(f"日常升两级：{max_attempts} 次补点后仍未进入角色界面")
@@ -324,6 +348,13 @@ class DailyLevelUpTask(BaseTask):
 
     def _ensure_target_indicator(self) -> bool:
         """步骤3：模板匹配升级目标指示；未匹配则点击切换按钮，直到匹配或达到上限。"""
+        # 模板缺失直接失败返回（核心前提条件，缺失无法继续）
+        if self._target_indicator_tpl is None:
+            logger.error(
+                "日常升两级：步骤3升级目标指示模板缺失 (templates/levelup_target_indicator.png)！"
+                "请先运行 move_levelup_templates.py 将新截图移动并重命名到 templates/ 目录"
+            )
+            return False
         step_sleep = float(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
         max_iters = int(
             self.config.get("target_indicator_max_iters", DEFAULT_CONFIG["target_indicator_max_iters"])
@@ -331,24 +362,34 @@ class DailyLevelUpTask(BaseTask):
         threshold = float(
             self.config.get("target_indicator_threshold", DEFAULT_CONFIG["target_indicator_threshold"])
         )
+        roi = self.config.get(
+            "target_indicator_template_roi", DEFAULT_CONFIG["target_indicator_template_roi"]
+        )
         switch_roi = self.config.get("switch_click_roi", DEFAULT_CONFIG["switch_click_roi"])
+        tpl_h, tpl_w = self._target_indicator_tpl.shape[:2]
         clicked = 0
         while max_iters <= 0 or clicked < max_iters:
             frame = self.next_frame()
             if frame is None:
                 logger.warning("日常升两级：步骤3匹配时无画面可用")
                 return False
-            matched, conf = self._is_target_matched(frame)
+            fh, fw = frame.shape[:2]
+            x1, y1, x2, y2 = max(0, int(fw*roi[0])), max(0, int(fh*roi[1])), min(fw, int(fw*roi[2])), min(fh, int(fh*roi[3]))
+            matched, conf = self._match_template_direct(
+                frame, self._target_indicator_tpl, roi, threshold
+            )
             if matched:
                 suffix = f"，共点击切换按钮 {clicked} 次" if clicked else ""
                 logger.info(
-                    f"日常升两级：步骤3匹配到升级目标指示 (置信度 {conf:.3f} >= {threshold}){suffix}"
+                    f"日常升两级：步骤3匹配到升级目标指示 (置信度 {conf:.3f} >= {threshold}，"
+                    f"搜索区 {x1,y1,x2-x1,y2-y1}px，模板 {tpl_w}x{tpl_h}px){suffix}"
                 )
                 return True
             h, w = frame.shape[:2]
             cx, cy = roi_center(switch_roi, w, h)
             logger.info(
-                f"日常升两级：步骤3未匹配到升级目标指示 (置信度 {conf:.3f} < {threshold})，"
+                f"日常升两级：步骤3未匹配到升级目标指示 (置信度 {conf:.3f} < {threshold}，"
+                f"搜索区 {x1,y1,x2-x1,y2-y1}px，模板 {tpl_w}x{tpl_h}px)，"
                 f"第 {clicked + 1} 次点击切换按钮 ({cx}, {cy})"
             )
             self.click(cx, cy)
@@ -359,6 +400,12 @@ class DailyLevelUpTask(BaseTask):
 
     def _ensure_upgrade_page(self, click_roi) -> bool:
         """步骤5：校验是否进入升级页面；未进入则按 click_roi（升级按钮）补点几次。"""
+        if self._upgrade_indicator_tpl is None:
+            logger.warning(
+                "日常升两级：步骤5升级页面模板缺失 (templates/levelup_upgrade_indicator.png)，"
+                "请先运行 move_levelup_templates.py，跳过页面校验"
+            )
+            return True
         step_sleep = float(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
         max_attempts = int(
             self.config.get(
@@ -366,18 +413,47 @@ class DailyLevelUpTask(BaseTask):
                 DEFAULT_CONFIG["upgrade_indicator_check_max_attempts"],
             )
         )
+        roi = self.config.get(
+            "upgrade_indicator_template_roi", DEFAULT_CONFIG["upgrade_indicator_template_roi"]
+        )
+        threshold = float(
+            self.config.get("upgrade_indicator_threshold", DEFAULT_CONFIG["upgrade_indicator_threshold"])
+        )
+        tpl_h, tpl_w = self._upgrade_indicator_tpl.shape[:2]
         for attempt in range(1, max_attempts + 1):
             frame = self.next_frame()
             if frame is None:
                 logger.warning("日常升两级：校验升级页面时无画面可用")
                 return False
-            if self._is_on_upgrade_page(frame):
-                logger.info(f"日常升两级：已进入升级页面（第 {attempt} 次确认）")
+            fh, fw = frame.shape[:2]
+            x1, y1, x2, y2 = max(0, int(fw*roi[0])), max(0, int(fh*roi[1])), min(fw, int(fw*roi[2])), min(fh, int(fh*roi[3]))
+            matched, conf = self._match_template_direct(
+                frame, self._upgrade_indicator_tpl, roi, threshold
+            )
+            if matched:
+                logger.info(
+                    f"日常升两级：已进入升级页面（第 {attempt} 次确认，置信度 {conf:.3f}，"
+                    f"搜索区 {x1,y1,x2-x1,y2-y1}px，模板 {tpl_w}x{tpl_h}px）"
+                )
                 return True
             h, w = frame.shape[:2]
             cx, cy = roi_center(click_roi, w, h)
-            logger.info(f"日常升两级：未进入升级页面，第 {attempt} 次补点升级按钮 ({cx}, {cy})")
+            logger.info(
+                f"日常升两级：未进入升级页面 (置信度 {conf:.3f} < {threshold}，"
+                f"搜索区 {x1,y1,x2-x1,y2-y1}px，模板 {tpl_w}x{tpl_h}px)，"
+                f"第 {attempt} 次补点升级按钮 ({cx}, {cy})"
+            )
             self.click(cx, cy)
             self.sleep(step_sleep)
         logger.warning(f"日常升两级：{max_attempts} 次补点后仍未进入升级页面")
         return False
+
+    # ---------- 辅助 ----------
+
+    def _match_template_direct(
+        self, frame: np.ndarray, template: np.ndarray, roi, threshold: float
+    ) -> Tuple[bool, float]:
+        """在 frame 的 roi 区域内匹配 template，返回 (是否匹配, 最高置信度)。
+        与 ok_tasks._home.match_template_in_roi 逻辑相同，此处内联以便在需要时保存诊断。
+        """
+        return match_template_in_roi(frame, template, roi, threshold)
