@@ -5,14 +5,15 @@
   === 炼金 ===
   1. 检测主页炼金/派遣入口红点，有红点则点击 》 按钮进入"炼金和派遣"页面；无红点则结束。
   2. 进入页面后检测指定区域红点，有红点则点击该区域。
-  3. 步骤2点击后，点击"需求"按钮（固定位置）。
-  4. 步骤3后加载"保存"按钮模板文件，循环匹配并点击，直到匹配不到为止。
-  5. 点击返回按钮回到主界面。
+  3. 步骤2点击后，做一次"是否进入炼金页面"的模板匹配，未匹配则补点炼金入口固定位置。
+  4. 步骤2校验通过后，点击"需求"按钮（固定位置）。
+  5. 步骤4后加载"保存"按钮模板文件，循环匹配并点击，直到匹配不到为止。
+  6. 点击返回按钮回到主界面。
   === 派遣 ===
-  6. 返回主界面后再次检测入口红点并点击 》 重新进入"炼金和派遣"页面。
-  7. 检测派遣入口模板（templates/dispatch_entry.png），匹配则点击进入派遣页面。
-  8-10. 依次执行3个派遣子任务，每个子任务序列：点选区 → 点继续 → 点选区自身 → 点确认。
-  11. 点击与炼金相同的返回按钮位置回到主界面。
+  7. 返回主界面后再次检测入口红点并点击 》 重新进入"炼金和派遣"页面。
+  8. 检测派遣入口模板（templates/dispatch_entry.png），匹配则点击进入派遣页面。
+  9-11. 依次执行3个派遣子任务，每个子任务序列：点选区 → 点继续 → 点选区自身 → 点确认。
+  12. 点击与炼金相同的返回按钮位置回到主界面。
 
 红点检测复用 ok_tasks._red_dot 中的共享实现（与 HomeRedDotTask 同一套方法）。
 主页检测 / 模板匹配复用 ok_tasks._home 中的共享实现（is_on_home / match_template_in_roi）。
@@ -35,9 +36,11 @@ logger = logging.getLogger("AlchemyDispatchTask")
 # rx=0.0000, ry=0.4568, rw=0.0889, rh=0.0682  中心 (0.0444, 0.4906)
 _ENTRY_ROI = [0.0, 0.4568, 0.0889, 0.5250]
 
-# 步骤2选区信息: x=128, y=676, w=97, h=112  (图片尺寸 1080x1920)
-# rx=0.1185, ry=0.3521, rw=0.0898, rh=0.0583  中心 (0.1630, 0.3812)
-_STEP2_ROI = [0.1185, 0.3521, 0.2083, 0.4104]
+# 步骤2选区信息（已校准：x=144, y=680, w=76, h=116 @ 1080x1920）
+# rx=0.1333, ry=0.3542, rw=0.0704, rh=0.0604  中心 (0.1685, 0.3844)
+# 注：炼金入口红点为呼吸灯（透明度渐隐渐显），单帧可能抓在低饱和相位导致漏检，
+#    下方步骤2会做多帧重试（见 step2_retry_* 配置项）
+_STEP2_ROI = [0.1333, 0.3542, 0.2037, 0.4146]
 
 # 步骤3选区信息: x=592, y=1164, w=288, h=72  (图片尺寸 1080x1920)
 # rx=0.5481, ry=0.6062, rw=0.2667, rh=0.0375  中心 (0.6815, 0.6250)
@@ -69,6 +72,11 @@ _DISPATCH_CONFIRM_ROI = [0.4481, 0.8729, 0.5962, 0.9479]
 # 主页检测区域（与 HomeRedDotTask 一致，用于返回主界面后校验）: x=37, y=69, w=279, h=107
 _HOME_ROI = [0.0343, 0.0359, 0.2926, 0.0916]
 
+# 炼金步骤2后页面校验模板匹配选区: x=8, y=84, w=172, h=64 @ 1080x1920
+# rx=0.0074, ry=0.0437, rw=0.1593, rh=0.0333  中心 (0.0870, 0.0604)
+# 模板文件 templates/alchemy_page_indicator.png
+_ALCHEMY_PAGE_ROI = [0.0074, 0.0437, 0.1667, 0.0771]
+
 DEFAULT_CONFIG = {
     "_enabled": True,
     # 是否跟随"周常日常"大开始按钮一起执行（配置面板仅显示此项，其他技术配置项隐藏）
@@ -81,6 +89,11 @@ DEFAULT_CONFIG = {
     "step2_red_dot_roi": list(_STEP2_ROI),
     # 步骤2：检测到红点后点击的区域，点击其中心
     "step2_click_roi": list(_STEP2_ROI),
+    # 步骤2：炼金入口红点为呼吸灯（渐隐渐显），单帧可能抓在低饱和相位；
+    # 重试次数 × 间隔覆盖多个呼吸相位，避免漏检
+    "step2_retry_times": 5,
+    # 步骤2：相邻两次重检的间隔毫秒数（默认 200ms，配 5 次共覆盖 ~0.8s+）
+    "step2_retry_interval_ms": 200,
     # 步骤3：步骤2点击后点击的"需求"按钮区域（固定位置点击），点击其中心
     "step3_click_roi": list(_STEP3_ROI),
     # 步骤4：保存按钮模板文件路径
@@ -119,6 +132,11 @@ DEFAULT_CONFIG = {
     "home_threshold": 0.70,
     # 返回主界面后未回主页时的最大补点次数
     "home_check_max_attempts": 3,
+    # 炼金步骤2后：炼金页面模板匹配校验（未匹配则补点 step2 固定位置）
+    "alchemy_page_template_path": "templates/alchemy_page_indicator.png",
+    "alchemy_page_template_roi": list(_ALCHEMY_PAGE_ROI),
+    "alchemy_page_threshold": 0.70,
+    "alchemy_page_check_max_attempts": 3,
     # 点击后等待秒数
     "post_click_sleep": 1.0,
     # HSV red range. Red wraps around hue 0/180, so two intervals are used.
@@ -145,6 +163,7 @@ class AlchemyDispatchTask(BaseTask):
 
     步骤1：检测入口红点，点击 》 进入"炼金和派遣"页面；无红点则结束。
     步骤2：进入页面后检测指定区域红点，有红点则点击该区域。
+    步骤2后：模板匹配校验是否进入炼金页面，未进入则补点炼金入口固定位置。
     步骤3：步骤2点击后，点击"需求"按钮固定位置。
     步骤4：加载"保存"按钮模板文件，循环匹配并点击直到匹配不到。
     步骤5：点击返回按钮回到主界面。
@@ -170,6 +189,7 @@ class AlchemyDispatchTask(BaseTask):
         self._step4_tpl: Optional[np.ndarray] = None
         self._dispatch_tpl: Optional[np.ndarray] = None
         self._home_tpl: Optional[np.ndarray] = None
+        self._alchemy_page_tpl: Optional[np.ndarray] = None
 
     def on_create(self):
         # 永不自动启动；用户必须点"批量启动"或单个"Start"按钮才会执行。
@@ -179,6 +199,7 @@ class AlchemyDispatchTask(BaseTask):
         self._load_step4_template()
         self._load_dispatch_template()
         self._load_home_template()
+        self._load_alchemy_page_template()
 
     def _load_step4_template(self):
         """加载步骤4保存按钮模板文件到内存。"""
@@ -235,6 +256,58 @@ class AlchemyDispatchTask(BaseTask):
         logger.warning(f"炼金和派遣：{label} {max_attempts} 次补点后仍未回主界面")
         return False
 
+    def _load_alchemy_page_template(self):
+        """加载炼金步骤2后的页面模板；模板缺失时校验将被跳过（不阻塞流程）。"""
+        rel = self.config.get(
+            "alchemy_page_template_path", DEFAULT_CONFIG["alchemy_page_template_path"]
+        )
+        tpl = load_template_image(rel)
+        if tpl is None:
+            logger.warning(f"炼金和派遣：炼金页模板未找到，步骤2后页面校验将跳过: {rel}")
+        self._alchemy_page_tpl = tpl
+
+    def _is_on_alchemy_page(self, frame: np.ndarray) -> bool:
+        """检测当前画面是否已进入炼金页面；模板缺失时返回 True（跳过校验，向后兼容）。"""
+        if self._alchemy_page_tpl is None:
+            return True
+        roi = self.config.get(
+            "alchemy_page_template_roi", DEFAULT_CONFIG["alchemy_page_template_roi"]
+        )
+        threshold = float(
+            self.config.get("alchemy_page_threshold", DEFAULT_CONFIG["alchemy_page_threshold"])
+        )
+        return is_on_home(frame, self._alchemy_page_tpl, roi, threshold)
+
+    def _ensure_alchemy_page(self, click_roi, label: str) -> bool:
+        """炼金步骤2后校验是否进入炼金页面；未进入则按 click_roi（炼金入口）补点几次。
+
+        label 用于日志标识（如"炼金步骤2后"）。
+        """
+        step_sleep = float(self.config.get("post_click_sleep", DEFAULT_CONFIG["post_click_sleep"]))
+        max_attempts = int(
+            self.config.get(
+                "alchemy_page_check_max_attempts",
+                DEFAULT_CONFIG["alchemy_page_check_max_attempts"],
+            )
+        )
+        for attempt in range(1, max_attempts + 1):
+            frame = self.next_frame()
+            if frame is None:
+                logger.warning(f"炼金和派遣：{label} 校验炼金页面时无画面可用")
+                return False
+            if self._is_on_alchemy_page(frame):
+                logger.info(f"炼金和派遣：{label} 已进入炼金页面（第 {attempt} 次确认）")
+                return True
+            h, w = frame.shape[:2]
+            cx, cy = roi_center(click_roi, w, h)
+            logger.info(
+                f"炼金和派遣：{label} 未进入炼金页面，第 {attempt} 次补点入口 ({cx}, {cy})"
+            )
+            self.click(cx, cy)
+            self.sleep(step_sleep)
+        logger.warning(f"炼金和派遣：{label} {max_attempts} 次补点后仍未进入炼金页面")
+        return False
+
     def _match_template(self, frame: np.ndarray, template: np.ndarray, roi, threshold: float) -> Tuple[bool, float]:
         """在 frame 的 roi 区域内匹配 template，返回 (是否匹配, 最高置信度)。"""
         return match_template_in_roi(frame, template, roi, threshold)
@@ -284,18 +357,27 @@ class AlchemyDispatchTask(BaseTask):
             logger.info("炼金和派遣：入口无红点，结束")
             return False
 
-        # 步骤2：进入页面后取新帧，检测指定区域红点，有则点击该区域
+        # 步骤2：进入页面后检测指定区域红点，有红点则点击该区域
+        # 炼金入口红点是呼吸灯（渐隐渐显），单帧可能抓在低饱和相位 → 多帧重试
         step2_clicked = False
-        frame2 = self.next_frame()
-        if frame2 is None:
-            logger.warning("炼金：步骤2无画面可用，跳过")
-        else:
+        frame2 = None
+        retry_times = int(self.config.get("step2_retry_times", DEFAULT_CONFIG["step2_retry_times"]))
+        if retry_times < 1:
+            retry_times = 1
+        retry_interval_s = float(self.config.get(
+            "step2_retry_interval_ms", DEFAULT_CONFIG["step2_retry_interval_ms"]
+        )) / 1000.0
+
+        for attempt in range(1, retry_times + 1):
+            frame2 = self.next_frame()
+            if frame2 is None:
+                if attempt == retry_times:
+                    logger.warning("炼金：步骤2无画面可用，跳过")
+                break
             roi2 = self.config.get("step2_red_dot_roi", DEFAULT_CONFIG["step2_red_dot_roi"])
             dot2 = detect_red_dot(frame2, roi2, self.config, DEFAULT_CONFIG)
-            if dot2 is None:
-                logger.info("炼金：步骤2区域无红点，跳过")
-            else:
-                logger.info(f"炼金：步骤2检测到红点 {dot2}，点击该区域")
+            if dot2 is not None:
+                logger.info(f"炼金：步骤2第 {attempt}/{retry_times} 次检测到红点 {dot2}，点击该区域")
                 h2, w2 = frame2.shape[:2]
                 click_roi2 = self.config.get("step2_click_roi", DEFAULT_CONFIG["step2_click_roi"])
                 cx2, cy2 = roi_center(click_roi2, w2, h2)
@@ -303,6 +385,20 @@ class AlchemyDispatchTask(BaseTask):
                 self.click(cx2, cy2)
                 self.sleep(step_sleep)
                 step2_clicked = True
+                # 步骤2后：模板匹配校验是否进入炼金页面；未进入则补点炼金区域入口固定位置
+                self._ensure_alchemy_page(
+                    self.config.get("step2_click_roi", DEFAULT_CONFIG["step2_click_roi"]),
+                    "炼金步骤2后",
+                )
+                break
+            # 本轮未命中
+            if attempt < retry_times:
+                # 间隔等待下一帧刷新，让呼吸灯相位变化
+                self.sleep(retry_interval_s)
+                continue
+            logger.info(
+                f"炼金：步骤2区域 {retry_times} 次重检均未检测到红点，跳过（呼吸灯漏检 or 实际无红点）"
+            )
 
         # 步骤3：步骤2点击后，点击"需求"按钮固定位置（仅步骤2确实点击时执行）
         step3_done = False

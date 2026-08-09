@@ -2,15 +2,14 @@
 Network Error Handler for 天下布魔 (Tianxia Bumo).
 
 Detects and dismisses the "网络不稳定，将重新启动游戏" popup
-using template matching (primary) with OCR fallback.
+using template matching.
 
 Detection flow:
   1. Template-match the full popup on the screenshot
   2. If popup found, search the "确定" button within popup ROI
   3. Anti-misclick: verify button bbox is inside popup bbox
   4. Click button center, verify dismissal, retry if needed
-  5. If template matching fails, fall back to OCR-based detection
-  6. Cooldown prevents re-clicking the same popup within a window
+  5. Cooldown prevents re-clicking the same popup within a window
 
 Configuration is loaded from configs/NetworkErrorHandler.json
 (managed by the task config system).
@@ -76,15 +75,9 @@ DEFAULT_CONFIG = {
     "retry_delay_max": 1.0,
     "post_click_wait_min": 0.5,
     "post_click_wait_max": 1.0,
-    "fallback_to_ocr": True,
-    # Minimum seconds between OCR-fallback detections in check(). OCR is the
-    # heaviest path; gating it keeps idle CPU low while still recovering popups
-    # the templates cannot match.
-    "ocr_fallback_min_interval": 6.0,
     "debug_save_images": True,
     "debug_output_dir": "artifacts/network_error",
     "popup_roi": [0.00, 0.37, 1.00, 0.63],
-    "ocr_texts": ["网络不好", "网络异常", "连接失败", "网络连接", "无法连接", "确认", "确定"],
     "cooldown_seconds": 5.0,
     "template_min_var": 5.0,
     "template_min_size": 20,
@@ -220,7 +213,7 @@ class NetworkErrorHandler(ManagedTriggerTask):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "网络错误处理"
-        self.description = "检测并关闭网络不稳定弹窗（模板匹配优先，OCR回退）"
+        self.description = "检测并关闭网络不稳定弹窗（模板匹配）"
         self.visible = True
         self.default_config = dict(DEFAULT_CONFIG)
         self._popup_tpl = None
@@ -239,9 +232,6 @@ class NetworkErrorHandler(ManagedTriggerTask):
 
         # Pending detection result handed from check() to handle().
         self._pending_popup: Optional[Tuple[int, int, float, Tuple[int, int, int, int]]] = None
-        self._pending_ocr_box: Optional[object] = None
-        # Last time OCR fallback ran (gated by ocr_fallback_min_interval).
-        self._last_ocr_check_time: float = 0.0
 
     def on_create(self):
         super().on_create()  # ManagedTriggerTask: refresh params from config
@@ -324,12 +314,12 @@ class NetworkErrorHandler(ManagedTriggerTask):
         if not self._popup_valid:
             logger.error(
                 "No valid popup template loaded. "
-                "Place real templates in templates/ or enable OCR fallback."
+                "Place real templates in templates/."
             )
         if not self._button_valid:
             logger.error(
                 "No valid confirm button template loaded. "
-                "Place real templates in templates/ or enable OCR fallback."
+                "Place real templates in templates/."
             )
 
     @staticmethod
@@ -677,20 +667,16 @@ class NetworkErrorHandler(ManagedTriggerTask):
     def check(self, context: TriggerContext) -> TriggerDecision:
         """Cheap-ish detection phase.
 
-        检测阶段：模板匹配优先；模板未命中且距上次 OCR 超过
-        ``ocr_fallback_min_interval`` 时再做 OCR 探测。产出 TriggerDecision，
-        其中 fingerprint 供调度器去重。检测到的结果暂存于 _pending_popup /
-        _pending_ocr_box，供 handle() 使用。
+        检测阶段：使用模板匹配检测弹窗，并将结果暂存于 _pending_popup，供 handle() 使用。
         """
         frame = context.frame
         if frame is None:
             frame = self._current_frame()
         if frame is None:
             self._pending_popup = None
-            self._pending_ocr_box = None
             return TriggerDecision(should_handle=False, reason="no_frame")
 
-        # 1. Template matching (count matchTemplate calls for budget/metrics).
+        # Template matching (count matchTemplate calls for budget/metrics).
         match_counter = [0]
         popup_found, popup_result = self.detect_network_popup_by_template(frame, match_counter)
         context.match_calls += match_counter[0]
@@ -699,42 +685,19 @@ class NetworkErrorHandler(ManagedTriggerTask):
             _, _, conf, popup_bbox = popup_result
             fingerprint = self._compute_popup_fingerprint(popup_bbox, conf)
             self._pending_popup = popup_result
-            self._pending_ocr_box = None
             logger.info(f"Popup detected via template (conf={conf:.3f})")
             return TriggerDecision(
                 should_handle=True, reason="popup_template",
                 fingerprint=fingerprint, cost_estimate=0.5,
             )
 
-        # 2. OCR fallback (gated to bound CPU on the heaviest path).
-        fallback = self.config.get("fallback_to_ocr", DEFAULT_CONFIG["fallback_to_ocr"])
-        ocr_interval = float(self.config.get(
-            "ocr_fallback_min_interval", DEFAULT_CONFIG["ocr_fallback_min_interval"]
-        ))
-        now = context.now
-        if fallback and (now - getattr(self, "_last_ocr_check_time", 0.0)) >= ocr_interval:
-            self._last_ocr_check_time = now
-            ocr_texts = self.config.get("ocr_texts", DEFAULT_CONFIG["ocr_texts"])
-            for text in ocr_texts:
-                boxes = self.ocr(match=text)
-                context.ocr_calls += 1
-                if boxes:
-                    logger.info(f"[OCR] Detected network error text: '{text}'")
-                    self._pending_popup = None
-                    self._pending_ocr_box = boxes[0]
-                    return TriggerDecision(
-                        should_handle=True, reason=f"ocr:{text}",
-                        fingerprint=f"ocr:{text}", cost_estimate=0.8,
-                    )
-
         self._pending_popup = None
-        self._pending_ocr_box = None
         return TriggerDecision(should_handle=False, reason="no_popup")
 
     def handle(self, context: TriggerContext) -> TriggerResult:
         """Action phase: dismiss the popup detected by ``check()``.
 
-        处理阶段：根据 check() 暂存的结果点击确认按钮或 OCR 框，并验证关闭。
+        处理阶段：根据 check() 暂存的结果点击确认按钮，并验证关闭。
         """
         frame = context.frame
         if frame is None:
@@ -743,13 +706,11 @@ class NetworkErrorHandler(ManagedTriggerTask):
         max_retries = self.config.get("max_retries", DEFAULT_CONFIG["max_retries"])
         post_wait_min = self.config.get("post_click_wait_min", DEFAULT_CONFIG["post_click_wait_min"])
         post_wait_max = self.config.get("post_click_wait_max", DEFAULT_CONFIG["post_click_wait_max"])
-        fallback = self.config.get("fallback_to_ocr", DEFAULT_CONFIG["fallback_to_ocr"])
         save_debug = self.config.get("debug_save_images", DEFAULT_CONFIG["debug_save_images"])
         debug_dir = self.config.get("debug_output_dir", DEFAULT_CONFIG["debug_output_dir"])
 
-        # --- Template path ---
         if self._pending_popup is not None and frame is not None:
-            cx, cy, conf, popup_bbox = self._pending_popup
+            _, _, conf, popup_bbox = self._pending_popup
             fingerprint = self._compute_popup_fingerprint(popup_bbox, conf)
             button_counter = [0]
             btn_found, btn_result = self.detect_confirm_button_in_popup(
@@ -761,16 +722,7 @@ class NetworkErrorHandler(ManagedTriggerTask):
                 bx, by, bconf, btn_bbox = btn_result
                 if not self._verify_click_target(conf, bconf, popup_bbox, btn_bbox):
                     logger.error("Anti-misclick check failed, refusing to click.")
-                    if fallback:
-                        clicked = self._handle_network_popup_by_ocr(frame)
-                        context.ocr_calls += len(self.config.get(
-                            "ocr_texts", DEFAULT_CONFIG["ocr_texts"]))
-                        self._record_handle(fingerprint)
-                        return TriggerResult(handled=True, success=clicked,
-                                             ocr_calls=context.ocr_calls,
-                                             match_calls=context.match_calls)
-                    return TriggerResult.fail("anti_misclick",
-                                              match_calls=context.match_calls)
+                    return TriggerResult.fail("anti_misclick", match_calls=context.match_calls)
 
                 logger.info(f"Confirm button found (conf={bconf:.3f}), clicking...")
                 if save_debug:
@@ -782,31 +734,12 @@ class NetworkErrorHandler(ManagedTriggerTask):
                 return TriggerResult(
                     handled=True, success=ok,
                     match_calls=context.match_calls,
-                    ocr_calls=context.ocr_calls,
                     retries=context.retries,
                 )
-            else:
-                logger.warning("Popup found but confirm button not detected via template")
-                if fallback:
-                    clicked = self._handle_network_popup_by_ocr(frame)
-                    context.ocr_calls += len(self.config.get(
-                        "ocr_texts", DEFAULT_CONFIG["ocr_texts"]))
-                    if clicked:
-                        self._record_handle(fingerprint)
-                        return TriggerResult.ok(ocr_calls=context.ocr_calls,
-                                                match_calls=context.match_calls)
-                logger.warning("Cannot safely dismiss popup; skipping to avoid misclick.")
-                return TriggerResult.fail("button_not_found", match_calls=context.match_calls)
 
-        # --- OCR path ---
-        if self._pending_ocr_box is not None:
-            try:
-                self.click_box(self._pending_ocr_box)
-                logger.info("[OCR] Clicked detected box for network error")
-                return TriggerResult.ok(ocr_calls=context.ocr_calls)
-            except Exception as e:
-                return TriggerResult.fail(f"ocr_click_failed: {e}",
-                                          ocr_calls=context.ocr_calls)
+            logger.warning("Popup found but confirm button not detected via template")
+            logger.warning("Cannot safely dismiss popup; skipping to avoid misclick.")
+            return TriggerResult.fail("button_not_found", match_calls=context.match_calls)
 
         return TriggerResult.skip("no_pending")
 
@@ -912,22 +845,6 @@ class NetworkErrorHandler(ManagedTriggerTask):
         logger.warning(
             f"Popup could not be dismissed after {max_retries} attempts"
         )
-        return False
-
-    def _handle_network_popup_by_ocr(self, frame: np.ndarray) -> bool:
-        """
-        Legacy OCR-based network popup detection (fallback).
-
-        基于 OCR 的网络弹窗检测（回退方案）。
-        """
-        ocr_texts = self.config.get("ocr_texts", DEFAULT_CONFIG["ocr_texts"])
-        for text in ocr_texts:
-            boxes = self.ocr(match=text)
-            if boxes:
-                logger.info(f"[OCR] Detected network error text: '{text}'")
-                self.click_box(boxes[0])
-                logger.info(f"[OCR] Clicked detected box for '{text}'")
-                return True
         return False
 
     # ------------------------------------------------------------------

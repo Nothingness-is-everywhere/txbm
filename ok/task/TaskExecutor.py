@@ -124,6 +124,13 @@ class TaskExecutor:
             self._min_frame_interval = max(0.0, int(os.getenv('OK_MIN_FRAME_INTERVAL_MS', '50')) / 1000.0)
         except (TypeError, ValueError):
             self._min_frame_interval = 0.05
+        # wait_condition 防忙等最小轮询间隔（秒）：单轮过快时插入极短让步。
+        # OK_WAIT_MIN_POLL_MS 默认 10ms，0 禁用。next_frame 已有帧节流，此处仅作安全兜底，
+        # 不影响 timeout 语义，也不与 settle_time 的内部等待重复重度 sleep。
+        try:
+            self._wait_min_poll_interval = max(0.0, int(os.getenv('OK_WAIT_MIN_POLL_MS', '10')) / 1000.0)
+        except (TypeError, ValueError):
+            self._wait_min_poll_interval = 0.01
 
     def load_tr(self):
         locale_name = self.locale.name()
@@ -437,7 +444,9 @@ class TaskExecutor:
         if time_out == 0:
             time_out = self.wait_scene_timeout
         settled = 0
+        min_poll = self._wait_min_poll_interval
         while not self.exit_event.is_set():
+            iter_start = time.time()
             if pre_action is not None:
                 pre_action()
             self.next_frame()
@@ -462,6 +471,12 @@ class TaskExecutor:
                 settled = 0
             if post_action is not None:
                 post_action()
+            # 防忙等保护：本轮过快（如 next_frame 未节流时）插入极短让步，避免 CPU 空转。
+            # next_frame 已有帧节流，此处仅在更高速时补一个极小 floor，不重复重度 sleep。
+            if min_poll > 0:
+                elapsed = time.time() - iter_start
+                if elapsed < min_poll:
+                    time.sleep(min_poll - elapsed)
             if time.time() - start > time_out:
                 logger.info(f"wait_until timeout {condition} {time_out} seconds")
                 break

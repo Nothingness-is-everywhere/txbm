@@ -29,6 +29,7 @@ config = {
         ["ok_tasks.HomeRedDotTask", "HomeRedDotTask"],
         ["ok_tasks.AlchemyDispatchTask", "AlchemyDispatchTask"],
         ["ok_tasks.RecruitTask", "RecruitTask"],
+        ["ok_tasks.DailyLevelUpTask", "DailyLevelUpTask"],
     ],
     "trigger_tasks": [
         ["ok.automation.game_startup_task", "GameStartupTask"],

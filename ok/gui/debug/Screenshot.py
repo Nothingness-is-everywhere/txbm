@@ -18,6 +18,9 @@ from ok.util.file import find_first_existing_file, clear_folder, sanitize_filena
 
 logger = Logger.get_logger(__name__)
 _CLEANUP_FOLDERS = object()
+# 截图任务队列上限：debug 抓帧高频时避免无界堆积导致内存持续上涨。
+# 满时丢弃最旧任务，绝不阻塞调用线程（主线程/UI 线程）。
+SCREENSHOT_QUEUE_MAXSIZE = 120
 
 
 class Screenshot(QObject):
@@ -43,7 +46,7 @@ class Screenshot(QObject):
         self.screenshot_folder = get_relative_path(og.ok.config.get("screenshots_folder")) or get_relative_path("screenshots")
         logger.debug(f"init Screenshot {self.screenshot_folder} {self.click_screenshot_folder}")
         if self.click_screenshot_folder is not None or self.screenshot_folder is not None:
-            self.task_queue = queue.Queue()
+            self.task_queue = queue.Queue(maxsize=SCREENSHOT_QUEUE_MAXSIZE)
             self.exit_event.bind_queue(self.task_queue)
             self.thread = threading.Thread(target=self._worker, name="screenshot")
             self.thread.start()
@@ -106,9 +109,31 @@ class Screenshot(QObject):
                 del self.ui_dict[key]
 
     def add_task(self, frame, folder, name=None, show_box=False, frame_box=None):
-        if self.task_queue is not None:
-            self.task_queue.put(
-                (frame, self.ui_dict.copy(), folder, f'{get_current_time_formatted()}_{name}', show_box, frame_box))
+        if self.task_queue is None:
+            return
+        task = (frame, self.ui_dict.copy(), folder, f'{get_current_time_formatted()}_{name}', show_box, frame_box)
+        try:
+            self.task_queue.put_nowait(task)
+        except queue.Full:
+            # 队列满：丢弃一个最旧任务后重试一次；仍满则跳过本次截图，绝不阻塞调用线程。
+            # 控制信号(None/_CLEANUP_FOLDERS)不让位，原样放回并放弃本次截图。
+            try:
+                dropped = self.task_queue.get_nowait()
+            except queue.Empty:
+                return
+            if dropped is None or dropped is _CLEANUP_FOLDERS:
+                try:
+                    self.task_queue.put_nowait(dropped)
+                except queue.Full:
+                    pass
+                logger.debug('screenshot queue full with control signal, skip task')
+                return
+            self.task_queue.task_done()
+            logger.debug('screenshot queue full, dropped oldest task')
+            try:
+                self.task_queue.put_nowait(task)
+            except queue.Full:
+                logger.debug('screenshot queue still full, skip task')
 
     def _worker(self):
         while True and not self.exit_event.is_set():
@@ -189,7 +214,19 @@ class Screenshot(QObject):
     def stop(self):
         logger.debug(f'stop screenshot')
         if self.task_queue is not None:
-            self.task_queue.put(None)
+            # 有界队列下避免停止信号被阻塞：先尝试非阻塞放入，满则让出一个旧任务后重试
+            try:
+                self.task_queue.put_nowait(None)
+            except queue.Full:
+                try:
+                    self.task_queue.get_nowait()
+                    self.task_queue.task_done()
+                except queue.Empty:
+                    pass
+                try:
+                    self.task_queue.put_nowait(None)
+                except queue.Full:
+                    logger.warning('screenshot queue full on stop, worker may not exit cleanly')
 
     def to_pil_image(self, frame, processor=None):
         if frame is None:

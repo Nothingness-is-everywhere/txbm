@@ -8,7 +8,7 @@ Tests cover:
   1. test_roi_normalized_and_pixel_modes — ROI auto-detection (normalized + pixel)
   2. test_detect_popup_and_button_on_fixture_image — end-to-end detection on synthetic fixture
   3. test_reject_click_when_button_outside_popup — anti-misclick validation
-  4. test_fallback_to_ocr_when_template_missing — OCR fallback when templates invalid
+  4. test_template_missing_returns_not_found — template-only detection when templates invalid
   5. test_cooldown_prevents_repeat_click — cooldown deduplication
   6. test_template_validation_rejects_placeholder — low-variance template rejection
 """
@@ -211,8 +211,8 @@ class TestAntiMisclick(unittest.TestCase):
         self.assertTrue(is_bbox_inside(button_bbox, popup_bbox))
 
 
-class TestCooldownAndFallback(unittest.TestCase):
-    """Tests for cooldown and OCR fallback mechanisms."""
+class TestCooldownAndDetection(unittest.TestCase):
+    """Tests for cooldown and template-detection behavior."""
 
     def setUp(self):
         self.handler = NetworkErrorHandler.__new__(NetworkErrorHandler)
@@ -265,7 +265,7 @@ class TestCooldownAndFallback(unittest.TestCase):
         self.assertGreaterEqual(self.handler._last_handle_time, before)
         self.assertLessEqual(self.handler._last_handle_time, after)
 
-    def test_fallback_to_ocr_when_template_missing(self):
+    def test_template_missing_returns_not_found(self):
         """When popup template is invalid, should not detect popup."""
         self.handler._popup_valid = False
         self.handler._popup_tpl = None

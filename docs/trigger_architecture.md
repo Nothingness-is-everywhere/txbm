@@ -52,7 +52,7 @@
 2. **优先级**：`priority` 越高越先被选取（network 80 > recovery 70 > battle_scene 60 > ui_popup 50 > task_flow 40）。
 3. **冷却兜底**：`cool_to_run` 在选取阶段即按 `min_interval` / `cooldown_seconds` / 分类冷却 / 全局最小间隔过滤——**冷却期间整段跳过 check**，避免无效的截图/匹配开销。
 4. **去重**：`check()` 产出 `fingerprint`，相同 fingerprint 在 `dedup_window_seconds` 内只处理一次。
-5. **预算控制**：滚动窗口内限制总运行次数 / OCR 次数 / 模板匹配次数（`budget_*_per_window`）。
+5. **预算控制**：滚动窗口内限制总运行次数 / 模板匹配次数（`budget_*_per_window`）。
 6. **超时**：`check_timeout_seconds` / `handle_timeout_seconds` 通过 watchdog 线程限制单次耗时，防止主循环阻塞。
 7. **重试上限**：`max_retry` 由触发器在 `handle()` 内部受限重试，并由预算 / 超时兜底。
 
@@ -155,7 +155,7 @@ trigger metrics summary:
 | 调度 | 各触发器 round-robin + `trigger_sleep(3s)` 阻塞 | 单点 `TriggerScheduler.select`，按优先级 + 冷却 |
 | 冷却期检测 | 仍每 2s 跑全量模板匹配（冷却判断在检测之后） | 冷却期整段跳过 check，**0 次匹配** |
 | 模板匹配尺度 | 9 尺度 × N 模板 | 4 尺度 × N 模板（-55% 调用） |
-| OCR 频率 | 每个周期模板未命中即 OCR | `ocr_fallback_min_interval`（默认 6s）门控 |
+| 模板匹配频率 | 每个周期执行模板匹配 | 由 `min_interval`/`cooldown`/预算统一控制 |
 | 超时 | 无 | check/handle watchdog 超时 |
 | 异常 | `run()` 抛错 → 任务被永久禁用 | `run()` 永不抛出，软失败计入指标 |
 | 可观测 | 无 | 每触发器/分类/全局计数 + 周期摘要 |
@@ -165,7 +165,7 @@ trigger metrics summary:
 
 - 每分钟扫描次数：`trigger_sleep(3s)` 周期 ≈ 20 次/min → managed `min_interval=3s` 精确等待 ≈ 20 次/min（频率相近，但**冷却期不再做匹配**）。
 - 每分钟模板匹配调用：旧 9 尺度 × 2 模板 × 20 ≈ **360 次/min** → 新 4 尺度 × 2 模板 × 20 ≈ **160 次/min**（-55%）；处理弹窗后的 5s 冷却期内进一步降至 **0 次**。
-- 每分钟 OCR 调用：旧每周期未命中即 OCR ≈ **20 次/min** → 新 `ocr_fallback_min_interval=6s` ≈ **10 次/min**（-50%）。
+- 每分钟模板匹配调用：旧 9 尺度 × 2 模板 × 20 ≈ **360 次/min** → 新 4 尺度 × 2 模板 × 20 ≈ **160 次/min**（-55%）。
 - 主线程阻塞：旧 `trigger_sleep` 每 full-cycle 阻塞 3s → managed 用 `_wait_for_activity(min_interval)` 精确等待，**可被一次性任务唤醒**。
 
-> 实际数据请在目标机器上运行后查看 `TriggerMetrics` 摘要日志，对比 `ocr/match/sec` 字段。
+> 实际数据请在目标机器上运行后查看 `TriggerMetrics` 摘要日志，对比 `match/sec` 字段。

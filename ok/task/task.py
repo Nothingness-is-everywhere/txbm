@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import threading
@@ -739,6 +740,59 @@ class OCR(FindFeature):
         super().__init__(*args, **kwargs)
         self.ocr_default_threshold = 0.2
         self.ocr_target_height = 0
+        # OCR 短时结果缓存：同 key 在 TTL 内复用结果，避免毫秒级重复 OCR 调用引擎。
+        # 回滚：OK_OCR_CACHE_TTL=0 完全禁用缓存；OK_OCR_CACHE_MAX 控制条目上限。
+        self._ocr_cache = {}
+        try:
+            self._ocr_cache_ttl = max(0.0, float(os.getenv('OK_OCR_CACHE_TTL', '0.25')))
+        except (TypeError, ValueError):
+            self._ocr_cache_ttl = 0.25
+        try:
+            self._ocr_cache_max = max(1, int(os.getenv('OK_OCR_CACHE_MAX', '256')))
+        except (TypeError, ValueError):
+            self._ocr_cache_max = 256
+        # 高频 OCR 详细日志采样计数（见 Change 4）
+        self._ocr_log_counter = 0
+
+    def _build_ocr_cache_key(self, box, x, y, to_x, to_y, width, height, match, threshold, lib,
+                            use_grayscale, target_height, frame_height, frame_width):
+        if box is not None:
+            region = (box.x, box.y, box.width, box.height)
+        else:
+            region = (x, y, to_x, to_y, width, height)
+        if match is None:
+            match_key = None
+        elif isinstance(match, re.Pattern):
+            match_key = match.pattern
+        elif isinstance(match, (list, tuple)):
+            match_key = tuple(m.pattern if isinstance(m, re.Pattern) else str(m) for m in match)
+        else:
+            match_key = str(match)
+        # frame 维度纳入 key，防止分辨率切换后命中过期坐标
+        return (region, match_key, threshold, lib, bool(use_grayscale), target_height, frame_height, frame_width)
+
+    def _get_cached_ocr(self, key):
+        entry = self._ocr_cache.get(key)
+        if entry is None:
+            return None
+        ts, boxes = entry
+        if time.time() - ts > self._ocr_cache_ttl:
+            del self._ocr_cache[key]
+            return None
+        return boxes
+
+    def _set_cached_ocr(self, key, boxes):
+        cache = self._ocr_cache
+        now = time.time()
+        # 写入前轻量清理过期项，避免脏数据长期滞留
+        if len(cache) >= self._ocr_cache_max:
+            for k in list(cache.keys()):
+                if now - cache[k][0] > self._ocr_cache_ttl:
+                    del cache[k]
+        # 仍超上限：丢弃一个最旧 key（近似 FIFO）
+        if len(cache) >= self._ocr_cache_max:
+            cache.pop(next(iter(cache)))
+        cache[key] = (now, boxes)
 
     def ocr(self, x=0, y=0, to_x=1, to_y=1, match=None, width=0, height=0, box=None, name=None,
             threshold=0, frame=None, target_height=0, use_grayscale=False, log=False,
@@ -791,6 +845,18 @@ class OCR(FindFeature):
                 image = image[box.y:box.y + box.height, box.x:box.x + box.width]
                 if not box.name and match:
                     box.name = str(match)
+            # === OCR 短时缓存：仅实时帧、无 frame_processor、非调试(screenshot/log)时启用 ===
+            use_ocr_cache = (self._ocr_cache_ttl > 0 and frame is None and frame_processor is None
+                             and not screenshot and not log)
+            cache_key = None
+            if use_ocr_cache:
+                cache_key = self._build_ocr_cache_key(
+                    box, x, y, to_x, to_y, width, height, match, threshold, lib,
+                    use_grayscale, target_height, frame_height, frame_width)
+                cached = self._get_cached_ocr(cache_key)
+                if cached is not None:
+                    # 命中：跳过引擎调用，直接复用 250ms 内的同区域结果
+                    return sort_boxes(cached)
             if use_grayscale:
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -798,6 +864,8 @@ class OCR(FindFeature):
             if frame_processor is not None:
                 image = frame_processor(image)
             detected_boxes, ocr_boxes = self.ocr_fun(lib)(box, image, match, scale_factor, threshold, lib)
+            if cache_key is not None:
+                self._set_cached_ocr(cache_key, detected_boxes)
 
             communicate.emit_draw_box("ocr" + join_list_elements(name), detected_boxes, "red")
             communicate.emit_draw_box("ocr_zone" + join_list_elements(name), [box] if box else [],
@@ -805,17 +873,28 @@ class OCR(FindFeature):
 
             if screenshot:
                 self.screenshot('ocr', frame=image, show_box=True, frame_box=box)
+            explicit_log = log
             if log:
                 level = logger.info
             elif self.log_debug and self.debug:
                 level = logger.debug
             else:
                 level = None
-            if level:
+            # 高频详细日志采样：显式 log 请求不采样；后台 debug 日志每 20 次输出 1 次，
+            # 降低 ocr_boxes 大对象日志噪声（warning/error 不受影响，仍走各自分支）
+            if level is not None:
+                if explicit_log:
+                    log_this_call = True
+                else:
+                    self._ocr_log_counter += 1
+                    log_this_call = (self._ocr_log_counter % 20 == 0)
+            else:
+                log_this_call = False
+            if log_this_call:
                 level(
                     f"ocr_zone {box} found result: {detected_boxes}) time: {(time.time() - start):.2f} scale_factor: {scale_factor:.2f} target_height:{target_height} resized_shape:{image.shape} all_boxes: {ocr_boxes}")
-            if level and not detected_boxes and ocr_boxes:
-                level(f'ocr detected but no match: {match} {ocr_boxes}')
+                if not detected_boxes and ocr_boxes:
+                    level(f'ocr detected but no match: {match} {ocr_boxes}')
             return sort_boxes(detected_boxes)
 
     def ocr_fun(self, lib):
@@ -1311,6 +1390,9 @@ class BaseTask(OCR):
 
     def disable(self):
         self._enabled = False
+        # 清空 OCR 短时缓存，避免任务禁用后残留结果被下一次启用时复用
+        if hasattr(self, '_ocr_cache'):
+            self._ocr_cache.clear()
         self.executor.remove_onetime_task(self)
         self.executor._wake_executor()
         communicate.task.emit(self)
