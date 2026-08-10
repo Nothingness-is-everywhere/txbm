@@ -15,7 +15,7 @@ import numpy as np
 from ok.task.task import BaseTask
 
 from ok_tasks._home import is_on_home, load_template_image
-from ok_tasks._red_dot import detect_red_dot, roi_center, roi_to_pixels
+from ok_tasks._red_dot import detect_red_dot, detect_red_dot_breathing, roi_center, roi_to_pixels
 
 logger = logging.getLogger("HomeRedDotTask")
 
@@ -37,6 +37,9 @@ DEFAULT_CONFIG = {
     "home_threshold": 0.70,
     # 仅用于“第一个主页红点”检测
     "red_dot_roi": list(_PROFILE_ROI),
+    # 呼吸灯重试：主页红点也是渐隐渐显，默认 5 次 × 200ms
+    "red_dot_retry_times": 5,
+    "red_dot_retry_interval_ms": 200,
     # 第 2 步固定点击区域（个人信息入口）
     "profile_click_roi": list(_PROFILE_ROI),
     # 第 3 步固定点击区域（第二个入口）
@@ -129,10 +132,22 @@ class HomeRedDotTask(BaseTask):
             logger.info("获取好友体力：不在主页，终止")
             return False
 
-        # 仅检测第一个主页红点：无红点直接结束，有红点继续
+        # 仅检测第一个主页红点：呼吸灯（渐隐渐显），使用共享的多帧重检封装；
+        # 首帧先用已有的 frame 快速命中，未命中时拉新帧重试覆盖多个呼吸相位
         dot = self._detect_red_dot(frame)
         if dot is None:
-            logger.info("获取好友体力：第一个主页红点不存在，直接结束")
+            red_roi = self.config.get("red_dot_roi", DEFAULT_CONFIG["red_dot_roi"])
+            dot, frame, _attempts = detect_red_dot_breathing(
+                fetch_frame=lambda: self.next_frame(),
+                sleep_s=lambda s: self.sleep(s),
+                roi=red_roi,
+                config=self.config,
+                defaults=DEFAULT_CONFIG,
+                logger_fn=lambda msg: logger.info(f"获取好友体力：{msg}"),
+                label="好友体力主页红点",
+            )
+        if dot is None:
+            logger.info("获取好友体力：第一个主页红点不存在（含多帧重检），直接结束")
             return False
         logger.info(f"获取好友体力：检测到第一个主页红点 {dot}，继续执行固定点击")
 

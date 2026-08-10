@@ -27,7 +27,7 @@ import numpy as np
 from ok.task.task import BaseTask
 
 from ok_tasks._home import is_on_home, load_template_image, match_template_in_roi
-from ok_tasks._red_dot import detect_red_dot, roi_center
+from ok_tasks._red_dot import detect_red_dot, detect_red_dot_breathing, roi_center
 
 logger = logging.getLogger("AlchemyDispatchTask")
 
@@ -85,15 +85,17 @@ DEFAULT_CONFIG = {
     "red_dot_roi": list(_ENTRY_ROI),
     # 检测到红点后点击的区域（》按钮所在区域），点击其中心
     "click_roi": list(_ENTRY_ROI),
+    # 呼吸灯重试：入口红点（炼金/派遣共用）与步骤2红点都是脉动显示
+    # 默认 5 次 × 200ms ≈ 0.8s 窗口，覆盖 2+ 个呼吸周期
+    "red_dot_retry_times": 5,
+    "red_dot_retry_interval_ms": 200,
     # 步骤2：进入页面后的红点检测区域
     "step2_red_dot_roi": list(_STEP2_ROI),
     # 步骤2：检测到红点后点击的区域，点击其中心
     "step2_click_roi": list(_STEP2_ROI),
-    # 步骤2：炼金入口红点为呼吸灯（渐隐渐显），单帧可能抓在低饱和相位；
-    # 重试次数 × 间隔覆盖多个呼吸相位，避免漏检
-    "step2_retry_times": 5,
-    # 步骤2：相邻两次重检的间隔毫秒数（默认 200ms，配 5 次共覆盖 ~0.8s+）
-    "step2_retry_interval_ms": 200,
+    # 步骤2：允许独立覆盖呼吸灯重试参数（不填时复用上方 red_dot_retry_*）
+    "step2_red_dot_retry_times": 5,
+    "step2_red_dot_retry_interval_ms": 200,
     # 步骤3：步骤2点击后点击的"需求"按钮区域（固定位置点击），点击其中心
     "step3_click_roi": list(_STEP3_ROI),
     # 步骤4：保存按钮模板文件路径
@@ -312,10 +314,31 @@ class AlchemyDispatchTask(BaseTask):
         """在 frame 的 roi 区域内匹配 template，返回 (是否匹配, 最高置信度)。"""
         return match_template_in_roi(frame, template, roi, threshold)
 
-    def _enter_combined_page(self, frame: np.ndarray, label: str, step_sleep: float) -> bool:
-        """检测入口红点并点击 》 按钮进入"炼金和派遣"页面。返回是否进入。"""
+    def _enter_combined_page(self, frame, label: str, step_sleep: float) -> bool:
+        """检测入口红点并点击 》 按钮进入"炼金和派遣"页面。返回是否进入。
+
+        入口红点是呼吸灯，使用共享的多帧重检封装；若调用方已经拿到首帧
+        ``frame``，则先用它跑一次检测，未命中时继续拉新帧重试。
+        """
         roi = self.config.get("red_dot_roi", DEFAULT_CONFIG["red_dot_roi"])
-        dot = detect_red_dot(frame, roi, self.config, DEFAULT_CONFIG)
+
+        # 首次尝试用传入的 frame（避免不必要的 next_frame 开销/延迟），
+        # 命中则直接走点击流程；否则交给共享重试循环覆盖多个呼吸相位。
+        dot = None
+        if frame is not None:
+            dot = detect_red_dot(frame, roi, self.config, DEFAULT_CONFIG)
+        if dot is None:
+            dot, last_frame, _attempts = detect_red_dot_breathing(
+                fetch_frame=lambda: self.next_frame(),
+                sleep_s=lambda s: self.sleep(s),
+                roi=roi,
+                config=self.config,
+                defaults=DEFAULT_CONFIG,
+                logger_fn=lambda msg: logger.info(f"{label}：{msg}"),
+                label=f"{label}入口",
+            )
+            if last_frame is not None:
+                frame = last_frame
         if dot is None:
             logger.info(f"{label}：入口无红点")
             return False
@@ -358,46 +381,37 @@ class AlchemyDispatchTask(BaseTask):
             return False
 
         # 步骤2：进入页面后检测指定区域红点，有红点则点击该区域
-        # 炼金入口红点是呼吸灯（渐隐渐显），单帧可能抓在低饱和相位 → 多帧重试
+        # 炼金入口红点是呼吸灯（渐隐渐显），使用共享的多帧重检封装
         step2_clicked = False
-        frame2 = None
-        retry_times = int(self.config.get("step2_retry_times", DEFAULT_CONFIG["step2_retry_times"]))
-        if retry_times < 1:
-            retry_times = 1
-        retry_interval_s = float(self.config.get(
-            "step2_retry_interval_ms", DEFAULT_CONFIG["step2_retry_interval_ms"]
-        )) / 1000.0
-
-        for attempt in range(1, retry_times + 1):
-            frame2 = self.next_frame()
-            if frame2 is None:
-                if attempt == retry_times:
-                    logger.warning("炼金：步骤2无画面可用，跳过")
-                break
-            roi2 = self.config.get("step2_red_dot_roi", DEFAULT_CONFIG["step2_red_dot_roi"])
-            dot2 = detect_red_dot(frame2, roi2, self.config, DEFAULT_CONFIG)
-            if dot2 is not None:
-                logger.info(f"炼金：步骤2第 {attempt}/{retry_times} 次检测到红点 {dot2}，点击该区域")
-                h2, w2 = frame2.shape[:2]
-                click_roi2 = self.config.get("step2_click_roi", DEFAULT_CONFIG["step2_click_roi"])
-                cx2, cy2 = roi_center(click_roi2, w2, h2)
-                logger.info(f"[步骤2] 点击区域 ({cx2}, {cy2})")
-                self.click(cx2, cy2)
-                self.sleep(step_sleep)
-                step2_clicked = True
-                # 步骤2后：模板匹配校验是否进入炼金页面；未进入则补点炼金区域入口固定位置
-                self._ensure_alchemy_page(
-                    self.config.get("step2_click_roi", DEFAULT_CONFIG["step2_click_roi"]),
-                    "炼金步骤2后",
-                )
-                break
-            # 本轮未命中
-            if attempt < retry_times:
-                # 间隔等待下一帧刷新，让呼吸灯相位变化
-                self.sleep(retry_interval_s)
-                continue
-            logger.info(
-                f"炼金：步骤2区域 {retry_times} 次重检均未检测到红点，跳过（呼吸灯漏检 or 实际无红点）"
+        step2_roi2 = self.config.get("step2_red_dot_roi", DEFAULT_CONFIG["step2_red_dot_roi"])
+        dot2, frame2, _a = detect_red_dot_breathing(
+            fetch_frame=lambda: self.next_frame(),
+            sleep_s=lambda s: self.sleep(s),
+            roi=step2_roi2,
+            config=self.config,
+            defaults=DEFAULT_CONFIG,
+            retry_times_cfg_key="step2_red_dot_retry_times",
+            retry_interval_cfg_key="step2_red_dot_retry_interval_ms",
+            logger_fn=lambda msg: logger.info(f"炼金：{msg}"),
+            label="炼金步骤2",
+        )
+        if frame2 is None:
+            logger.warning("炼金：步骤2无画面可用，跳过")
+        elif dot2 is None:
+            logger.info("炼金：步骤2区域多帧重检均无红点，跳过（可能确实无红点 or 呼吸灯相位窗口不足）")
+        else:
+            logger.info(f"炼金：步骤2检测到红点 {dot2}，点击该区域")
+            h2, w2 = frame2.shape[:2]
+            click_roi2 = self.config.get("step2_click_roi", DEFAULT_CONFIG["step2_click_roi"])
+            cx2, cy2 = roi_center(click_roi2, w2, h2)
+            logger.info(f"[步骤2] 点击区域 ({cx2}, {cy2})")
+            self.click(cx2, cy2)
+            self.sleep(step_sleep)
+            step2_clicked = True
+            # 步骤2后：模板匹配校验是否进入炼金页面；未进入则补点炼金区域入口固定位置
+            self._ensure_alchemy_page(
+                self.config.get("step2_click_roi", DEFAULT_CONFIG["step2_click_roi"]),
+                "炼金步骤2后",
             )
 
         # 步骤3：步骤2点击后，点击"需求"按钮固定位置（仅步骤2确实点击时执行）
