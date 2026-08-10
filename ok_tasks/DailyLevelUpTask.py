@@ -15,13 +15,11 @@
 import logging
 from typing import Optional, Tuple
 
-import cv2
 import numpy as np
 
 from ok.task.task import BaseTask
-
 from ok_tasks._home import is_on_home, load_template_image, match_template_in_roi
-from ok_tasks._red_dot import roi_center, roi_to_pixels
+from ok_tasks._red_dot import roi_center
 
 logger = logging.getLogger("DailyLevelUpTask")
 
@@ -34,9 +32,9 @@ _ENTRY_ROI = [0.2815, 0.9208, 0.4037, 0.9520]
 # rx=0.1074, ry=0.8458, rw=0.0778, rh=0.0437
 _CHARACTER_PAGE_ROI = [0.1074, 0.8458, 0.1852, 0.8896]
 
-# 步骤3：升级目标指示模板匹配选区 x=112, y=1468, w=248, h=80 @ 1080x1920 中心 (236, 1508)
-# rx=0.1037, ry=0.7646, rw=0.2296, rh=0.0417
-_TARGET_INDICATOR_ROI = [0.1037, 0.7646, 0.3333, 0.8062]
+# 步骤3：升级目标指示模板匹配选区 x=312, y=920, w=120, h=260 @ 1080x1920 中心 (372, 1050)
+# rx=0.2889, ry=0.4792, rw=0.1111, rh=0.1354
+_TARGET_INDICATOR_ROI = [0.2889, 0.4792, 0.4000, 0.6146]
 
 # 步骤3：未匹配时点击的切换按钮选区 x=924, y=404, w=52, h=76 @ 1080x1920 中心 (950, 442)
 # rx=0.8556, ry=0.2104, rw=0.0481, rh=0.0396
@@ -46,13 +44,16 @@ _SWITCH_CLICK_ROI = [0.8556, 0.2104, 0.9037, 0.2500]
 # rx=0.8185, ry=0.7708, rw=0.1741, rh=0.0354
 _UPGRADE_BUTTON_ROI = [0.8185, 0.7708, 0.9926, 0.8062]
 
-# 步骤5：升级页面模板匹配选区 x=24, y=172, w=580, h=96 @ 1080x1920 中心 (314, 220)
-# rx=0.0222, ry=0.0896, rw=0.5370, rh=0.0500
-_UPGRADE_INDICATOR_ROI = [0.0222, 0.0896, 0.5593, 0.1396]
+# 步骤5：升级页面模板匹配选区 x=4, y=76, w=164, h=68 @ 1080x1920 中心 (86, 110)
+# rx=0.0037, ry=0.0396, rw=0.1519, rh=0.0354
+_UPGRADE_INDICATOR_ROI = [0.0037, 0.0396, 0.1556, 0.0750]
 
-# 步骤6：确认按钮选区 x=188, y=1224, w=88, h=84 @ 1080x1920 中心 (232, 1266)
-# rx=0.1741, ry=0.6375, rw=0.0815, rh=0.0437
-_CONFIRM_CLICK_ROI = [0.1741, 0.6375, 0.2556, 0.6812]
+# 步骤6：确认按钮 A 选区 x=196, y=1216, w=64, h=72 @ 1080x1920 中心 (228, 1252)
+# rx=0.1815, ry=0.6333, rw=0.0593, rh=0.0375
+_CONFIRM_CLICK_A_ROI = [0.1815, 0.6333, 0.2407, 0.6708]
+# 步骤6：确认按钮 B 选区 x=452, y=1564, w=204, h=48 @ 1080x1920 中心 (554, 1588)
+# rx=0.4185, ry=0.8146, rw=0.1889, rh=0.0250
+_CONFIRM_CLICK_B_ROI = [0.4185, 0.8146, 0.6074, 0.8396]
 
 # 主页检测区域（与 HomeRedDotTask / AlchemyDispatchTask 一致）
 _HOME_ROI = [0.0343, 0.0359, 0.2926, 0.0916]
@@ -87,8 +88,9 @@ DEFAULT_CONFIG = {
     "upgrade_indicator_template_roi": list(_UPGRADE_INDICATOR_ROI),
     "upgrade_indicator_threshold": 0.70,
     "upgrade_indicator_check_max_attempts": 3,
-    # 步骤6：确认按钮点击区域（点击其中心）
-    "confirm_click_roi": list(_CONFIRM_CLICK_ROI),
+    # 步骤6：确认按钮 A/B 点击区域（点击其中心）
+    "confirm_click_a_roi": list(_CONFIRM_CLICK_A_ROI),
+    "confirm_click_b_roi": list(_CONFIRM_CLICK_B_ROI),
     # 步骤6：两次运行之间的单独间隔（秒）
     "levelup_run_interval": 10.0,
     # 每步点击后的等待秒数（让游戏反应）
@@ -188,19 +190,20 @@ class DailyLevelUpTask(BaseTask):
             logger.warning("日常升两级：未能进入升级页面，终止")
             return False
 
-        # 6. 运行两次：点击确认按钮 → 再点击确认按钮（两次之间间隔 10 秒）
+        # 6. 运行两次：点击确认按钮 A → 点击确认按钮 B（两次运行之间间隔 10 秒）
         run_interval = float(self.config.get("levelup_run_interval", DEFAULT_CONFIG["levelup_run_interval"]))
         frame6 = self.next_frame()
         if frame6 is None:
             frame6 = frame4
         h6, w6 = frame6.shape[:2]
-        c_x, c_y = roi_center(self.config.get("confirm_click_roi", DEFAULT_CONFIG["confirm_click_roi"]), w6, h6)
+        a_x, a_y = roi_center(self.config.get("confirm_click_a_roi", DEFAULT_CONFIG["confirm_click_a_roi"]), w6, h6)
+        b_x, b_y = roi_center(self.config.get("confirm_click_b_roi", DEFAULT_CONFIG["confirm_click_b_roi"]), w6, h6)
         for run_idx in range(1, 3):
-            logger.info(f"[步骤6] 第 {run_idx} 次运行：点击确认按钮 ({c_x}, {c_y})")
-            self.click(c_x, c_y)
+            logger.info(f"[步骤6] 第 {run_idx} 次运行：点击确认按钮 A ({a_x}, {a_y})")
+            self.click(a_x, a_y)
             self.sleep(step_sleep)
-            logger.info(f"[步骤6] 第 {run_idx} 次运行：再次点击确认按钮 ({c_x}, {c_y})")
-            self.click(c_x, c_y)
+            logger.info(f"[步骤6] 第 {run_idx} 次运行：点击确认按钮 B ({b_x}, {b_y})")
+            self.click(b_x, b_y)
             if run_idx < 2:
                 logger.info(f"[步骤6] 两次运行之间等待 {run_interval} 秒")
                 self.sleep(run_interval)
