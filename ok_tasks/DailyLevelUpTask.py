@@ -15,12 +15,13 @@
 import logging
 from typing import Optional, Tuple
 
+import cv2
 import numpy as np
 
 from ok.task.task import BaseTask
 
 from ok_tasks._home import is_on_home, load_template_image, match_template_in_roi
-from ok_tasks._red_dot import roi_center
+from ok_tasks._red_dot import roi_center, roi_to_pixels
 
 logger = logging.getLogger("DailyLevelUpTask")
 
@@ -29,9 +30,9 @@ logger = logging.getLogger("DailyLevelUpTask")
 # rx=0.2815, ry=0.9208, rw=0.1222, rh=0.0312
 _ENTRY_ROI = [0.2815, 0.9208, 0.4037, 0.9520]
 
-# 步骤2：角色界面模板匹配选区 x=108, y=804, w=344, h=76 @ 1080x1920 中心 (280, 842)
-# rx=0.1000, ry=0.4188, rw=0.3185, rh=0.0396
-_CHARACTER_PAGE_ROI = [0.1000, 0.4188, 0.4185, 0.4583]
+# 步骤2：角色界面模板匹配选区 x=116, y=1624, w=84, h=84 @ 1080x1920 中心 (158, 1666)
+# rx=0.1074, ry=0.8458, rw=0.0778, rh=0.0437
+_CHARACTER_PAGE_ROI = [0.1074, 0.8458, 0.1852, 0.8896]
 
 # 步骤3：升级目标指示模板匹配选区 x=112, y=1468, w=248, h=80 @ 1080x1920 中心 (236, 1508)
 # rx=0.1037, ry=0.7646, rw=0.2296, rh=0.0417
